@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админ-панель</title>
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Админ-панель</h1>
+
+        
+        <div class="card">
+            <h2>Управление пользователями</h2>
+            <p>Здесь вы можете просматривать и изменять баланс зарегистрированных пользователей.</p>
+            <table id="users-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Telegram ID</th>
+                        <th>Имя</th>
+                        <th>Баланс</th>
+                        <th>Действие</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    </tbody>
+            </table>
+        </div>
+
+        
+        <div class="card">
+            <h2>Управление конкурсом</h2>
+            <p>Создайте новый конкурс. Старый активный конкурс будет автоматически завершен.</p>
+            <div class="contest-form">
+                <div class="form-group">
+                    <label for="contest-item-select">Выберите предмет для розыгрыша:</label>
+                    <select id="contest-item-select"></select>
+                </div>
+                <div class="form-group">
+                    <label for="contest-ticket-price">Цена за билет:</label>
+                    <input type="number" id="contest-ticket-price" value="100" min="1">
+                </div>
+                 <div class="form-group">
+                    <label for="contest-duration">Продолжительность (в часах):</label>
+                    <input type="number" id="contest-duration" value="24" min="1">
+                </div>
+                <button id="create-contest-btn" class="button-primary">Создать конкурс</button>
+            </div>
+             <div id="current-contest-info" class="hidden">
+                 <h3>Текущий активный конкурс</h3>
+                 <p id="contest-details"></p>
+                 <button id="draw-winner-btn" class="button-primary">Провести розыгрыш досрочно</button>
+             </div>
+        </div>
+
+
+        
+        <div class="card">
+            <h2>Содержимое кейса "All In"</h2>
+            <p>Выберите предметы, которые могут выпасть из основного кейса. Изменения сохраняются для всех игроков.</p>
+            <div id="case-items-container" class="items-grid">
+                </div>
+            <button id="save-case-btn" class="button-primary">Сохранить содержимое кейса</button>
+        </div>
+
+        
+        <div class="card">
+            <h2>Управление играми</h2>
+            <p>Включайте или отключайте игры для всех пользователей.</p>
+            <div id="game-management-container" class="settings-grid">
+                </div>
+            <button id="save-settings-btn" class="button-primary">Сохранить настройки</button>
+        </div>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+</html>

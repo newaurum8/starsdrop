@@ -1,0 +1,509 @@
+:root {
+    --bg-color: #171c26;
+    --page-bg: #0d1117;
+    --primary-text-color: #ffffff;
+    --secondary-text-color: #8A92A4;
+    --accent-color: #3b82f6; 
+    --card-bg-color: #212833;
+    --dark-button-bg: #374151;
+    --error-color: #ef4444;
+    --success-color: #22c55e;
+}
+
+/* --- ОБЩИЕ СТИЛИ --- */
+body { 
+    margin: 0; 
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+    background-color: var(--page-bg); 
+    color: var(--primary-text-color); 
+    overscroll-behavior-y: none; 
+    -webkit-user-select: none; 
+    user-select: none; 
+    display: flex;
+    justify-content: center;
+    min-height: 100vh;
+}
+
+.icon { font-style: normal; }
+.hidden { display: none !important; }
+
+.view-title { 
+    font-size: 24px; 
+    font-weight: bold; 
+    margin-bottom: 10px; 
+    text-align: center; 
+    flex-shrink: 0; 
+    width: 100%;
+}
+
+.control-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    width: 100%;
+}
+
+.control-group label {
+    font-size: 14px;
+    color: var(--secondary-text-color);
+    margin-bottom: 8px;
+}
+
+.miner-input { /* Общий стиль для всех инпутов в играх */
+    background-color: var(--bg-color);
+    color: var(--primary-text-color);
+    border: 1px solid #4b5563;
+    border-radius: 8px;
+    padding: 8px 12px;
+    text-align: center;
+    width: 100px;
+    font-size: 16px;
+}
+
+
+/* --- ОСНОВНАЯ СТРУКТУРА ПРИЛОЖЕНИЯ --- */
+.mini-app { 
+    width: 100%;
+    max-width: 420px;
+    height: 100%;
+    background-color: var(--bg-color);
+    display: flex; 
+    flex-direction: column; 
+    box-sizing: border-box; 
+    position: relative;
+    overflow: hidden;
+    margin: 0 auto;
+}
+
+@media (max-height: 850px) and (max-width: 480px) {
+    .mini-app {
+        height: 100vh;
+        max-height: 850px;
+        border-radius: 20px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    }
+    body {
+        align-items: center;
+    }
+}
+
+.app-header { 
+    padding: 15px;
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center; 
+    flex-shrink: 0;
+}
+
+.header-logo {
+    height: 100px;
+    width: 100px;
+}
+
+.header-balance {
+    display: flex;
+    align-items: center;
+    background-color: var(--card-bg-color);
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.header-balance .icon { margin-right: 5px; }
+
+.views-container {
+    flex-grow: 1;
+    padding: 15px;
+    display: flex;
+    position: relative;
+    overflow: hidden;
+}
+
+.view {
+    position: absolute;
+    top: 0;
+    left: 15px;
+    right: 15px;
+    bottom: 0;
+    display: none;
+    flex-direction: column;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    overflow-y: auto;
+    padding-bottom: 20px;
+}
+
+.view.active {
+    display: flex;
+    opacity: 1;
+    pointer-events: all;
+}
+
+
+/* --- КОМПОНЕНТЫ: КНОПКИ --- */
+.secondary-button, .primary-button { 
+    width: 100%; 
+    border: none; 
+    border-radius: 12px; 
+    padding: 14px; 
+    font-size: 16px; 
+    font-weight: bold; 
+    cursor: pointer; 
+    transition: opacity 0.2s; 
+}
+.secondary-button:hover, .primary-button:hover { opacity: 0.9; }
+
+.secondary-button { background-color: var(--dark-button-bg); color: var(--primary-text-color); }
+.primary-button { background-color: var(--accent-color); color: var(--primary-text-color); display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+.quantity-btn { 
+    flex-grow: 1; 
+    background: transparent; 
+    color: var(--secondary-text-color); 
+    border: none; 
+    padding: 8px; 
+    font-size: 16px; 
+    border-radius: 8px; 
+    cursor: pointer; 
+    transition: all 0.2s; 
+}
+.quantity-btn.active { background: var(--accent-color); color: white; font-weight: bold; }
+
+
+/* --- КОМПОНЕНТЫ: МОДАЛЬНЫЕ ОКНА --- */
+.overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.7); z-index: 199; opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
+.overlay.visible { opacity: 1; pointer-events: all; }
+
+.modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.95); z-index: 200; opacity: 0; pointer-events: none; transition: all 0.3s ease; width: 90vw; max-width: 380px; }
+.modal.visible { opacity: 1; pointer-events: all; transform: translate(-50%, -50%) scale(1); }
+
+.modal-content { background-color: var(--card-bg-color); padding: 20px; border-radius: 16px; display: flex; flex-direction: column; align-items: center; gap: 16px; position: relative; }
+
+.close-btn { position: absolute; top: 10px; right: 10px; background: var(--dark-button-bg); color: white; border: none; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; font-size: 14px; line-height: 30px; text-align: center; z-index: 201; }
+
+.notification-toast { position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%); background-color: var(--accent-color); color: white; padding: 10px 20px; border-radius: 20px; font-size: 14px; font-weight: 500; z-index: 999; opacity: 0; pointer-events: none; transition: all 0.3s ease-in-out; }
+.notification-toast.visible { opacity: 1; transform: translateX(-50%) translateY(-10px); }
+
+
+/* --- КОМПОНЕНТЫ: НАВИГАЦИЯ --- */
+.bottom-nav { padding: 10px 15px env(safe-area-inset-bottom, 20px); display: flex; justify-content: space-around; background-color: var(--card-bg-color); border-top: 1px solid #333; margin-top: auto; flex-shrink: 0; }
+.nav-btn { display: flex; flex-direction: column; align-items: center; gap: 5px; color: var(--secondary-text-color); background: none; border: none; cursor: pointer; flex-grow: 1; padding: 5px; }
+.nav-icon { height: 28px; display: flex; align-items: center; justify-content: center; }
+.nav-icon img { width: 40px; height: 28px; filter: grayscale(1) brightness(1.5); transition: filter 0.2s; }
+.nav-btn.active .nav-icon img { filter: none; }
+.nav-label { font-size: 13px; }
+.nav-btn.active { color: var(--accent-color); }
+
+
+/* --- ЭКРАН: ИГРА С КЕЙСАМИ --- */
+#game-view { justify-content: center; align-items: center; gap: 25px; }
+#case-view { text-align: center; }
+.case-card { padding: 20px; }
+.case-main-image { width: 150px; cursor: pointer; transition: transform 0.2s; position: relative; z-index: 10; pointer-events: auto !important; }
+.case-main-image:hover { transform: scale(1.05); }
+.case-card-title { font-size: 24px; font-weight: bold; margin-top: 10px; background-color: var(--card-bg-color); padding: 10px 20px; border-radius: 12px; }
+
+#spin-view { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 25px; }
+.case-title-main { font-size: 36px; font-weight: bold; margin: 0; }
+
+.spinner-container { width: 100%; position: relative; overflow: hidden; height: 120px; -webkit-mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent); mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent); }
+.spinner-pointer { position: absolute; top: -5px; left: 50%; transform: translateX(-50%); width: 3px; height: 130px; background-color: var(--accent-color); border-radius: 3px; z-index: 102; box-shadow: 0 0 10px var(--accent-color); }
+.roulette-track { display: flex; position: relative; left: 0; align-items: center; height: 100%; }
+.roulette-item { box-sizing: border-box; flex-shrink: 0; width: 120px; height: 110px; margin: 0 5px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; gap: 5px; background-color: var(--card-bg-color); border: 2px solid #4b5563; border-radius: 12px; }
+.roulette-item img { max-width: 60%; max-height: 60%; object-fit: contain; }
+
+.multi-spinner-container { width: 100%; display: flex; justify-content: center; align-items: center; gap: 10px; }
+.vertical-spinner { width: 100px; height: 250px; position: relative; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, transparent, black 15%, black 85%, transparent); mask-image: linear-gradient(to bottom, transparent, black 15%, black 85%, transparent); }
+.vertical-spinner::before { content: ''; position: absolute; left: -5px; top: 50%; transform: translateY(-50%); height: 3px; width: 110%; background-color: var(--accent-color); border-radius: 3px; z-index: 102; box-shadow: 0 0 10px var(--accent-color); }
+.vertical-roulette-track { display: flex; flex-direction: column; position: relative; top: 0; align-items: center; width: 100%; }
+.vertical-roulette-item { box-sizing: border-box; flex-shrink: 0; width: 100px; height: 100px; margin: 5px 0; display: flex; justify-content: center; align-items: center; background-color: var(--card-bg-color); border: 2px solid #4b5563; border-radius: 12px; }
+.vertical-roulette-item img { max-width: 60%; max-height: 60%; object-fit: contain; }
+
+.modal-case-image { width: 100px; }
+.price-message { font-size: 18px; font-weight: bold; }
+.price-message.error { color: var(--error-color); }
+.options-group { width: 100%; text-align: center; }
+.options-group label { font-size: 14px; color: var(--secondary-text-color); margin-bottom: 8px; display: block; }
+.quantity-selector { display: flex; justify-content: space-between; background-color: var(--bg-color); border-radius: 10px; padding: 4px; }
+.contents-preview { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 10px; background-color: var(--bg-color); padding: 10px; border-radius: 10px; max-height: 150px; overflow-y: auto; }
+.preview-item { display: flex; flex-direction: column; align-items: center; }
+.preview-item img { width: 40px; height: 40px; object-fit: contain; }
+.result-items-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 10px; width: 100%; max-height: 250px; overflow-y: auto; background-color: var(--bg-color); padding: 10px; border-radius: 10px; margin-bottom: 10px; }
+.result-buttons { display: flex; width: 100%; gap: 10px; }
+
+.fast-spin-group { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 0 10px; box-sizing: border-box; }
+.toggle-switch { position: relative; display: inline-block; width: 50px; height: 28px; margin: 0; -webkit-appearance: none; appearance: none; background-color: var(--dark-button-bg); border-radius: 34px; outline: none; cursor: pointer; transition: background-color 0.3s; }
+.toggle-switch:before { content: ""; position: absolute; height: 20px; width: 20px; left: 4px; bottom: 4px; background-color: white; border-radius: 50%; transition: transform 0.3s; }
+.toggle-switch:checked { background-color: var(--accent-color); }
+.toggle-switch:checked:before { transform: translateX(22px); }
+
+
+/* --- ЭКРАН: ПРОФИЛЬ, ДРУЗЬЯ, КОНКУРСЫ, АПГРЕЙДЫ --- */
+#friends-view { display: flex; flex-direction: column; gap: 20px; justify-content: center; }
+.friends-invite-section { background-color: var(--card-bg-color); padding: 20px; border-radius: 12px; text-align: center; }
+.friends-invite-section h2 { font-size: 20px; font-weight: bold; margin-top: 0; margin-bottom: 10px; }
+.friends-invite-section p { color: var(--secondary-text-color); margin-top: 0; margin-bottom: 20px; }
+.friends-buttons { display: flex; gap: 10px; }
+.friends-buttons .primary-button { flex-grow: 1; }
+.friends-buttons .secondary-button { width: 50px; flex-shrink: 0; }
+
+#profile-view { justify-content: flex-start; gap: 15px; }
+.profile-header { display: flex; align-items: center; gap: 15px; background-color: var(--card-bg-color); padding: 15px; border-radius: 12px; margin-bottom: 5px;}
+.profile-photo { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background-color: var(--bg-color); }
+.profile-info { display: flex; flex-direction: column; }
+.profile-name { font-size: 20px; font-weight: bold; margin: 0; }
+.profile-id { font-size: 14px; color: var(--secondary-text-color); margin: 4px 0 0 0; }
+.profile-tabs { display: flex; background-color: var(--card-bg-color); border-radius: 12px; padding: 5px; width: 100%;}
+.profile-tab-btn { flex-grow: 1; background: transparent; color: var(--secondary-text-color); border: none; padding: 10px; font-size: 16px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-weight: 500; }
+.profile-tab-btn.active { background: var(--accent-color); color: white; font-weight: bold; }
+.profile-content { width: 100%; flex-grow: 1; position: relative; overflow: hidden;}
+.profile-tab-content { position: absolute; width: 100%; height: 100%; opacity: 0; pointer-events: none; overflow-y: auto; transition: opacity 0.3s ease; }
+.profile-tab-content.active { opacity: 1; pointer-events: all; }
+#inventory-content { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; align-content: flex-start; padding-bottom: 20px; }
+.inventory-item { background-color: var(--card-bg-color); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.inventory-item img { width: 80px; height: 80px; object-fit: contain; }
+.inventory-item-name { font-weight: bold; font-size: 14px; text-align: center; }
+.inventory-sell-btn { width: 100%; background-color: var(--dark-button-bg); border: 1px solid #4b5563; color: var(--primary-text-color); border-radius: 8px; padding: 8px; font-size: 14px; font-weight: 500; cursor: pointer; }
+.inventory-empty-msg { color: var(--secondary-text-color); text-align: center; width: 100%; margin-top: 50px; grid-column: 1 / -1; }
+.inventory-item-price { font-size: 12px; color: var(--secondary-text-color); font-weight: 500;}
+#history-content { display: flex; flex-direction: column; gap: 10px; align-items: stretch; padding-bottom: 20px; }
+.history-item { display: flex; align-items: center; gap: 15px; background-color: var(--card-bg-color); padding: 10px; border-radius: 12px; }
+.history-item img { width: 50px; height: 50px; object-fit: contain; background-color: var(--bg-color); border-radius: 8px; padding: 5px; }
+.history-item-info { display: flex; flex-direction: column; flex-grow: 1; }
+.history-item-name { font-weight: bold; }
+.history-item-date { font-size: 12px; color: var(--secondary-text-color); }
+.history-item-price { font-size: 14px; font-weight: bold; display: flex; align-items: center; }
+
+#contests-view { 
+    justify-content: flex-start; 
+    align-items: center; 
+}
+.contest-card { 
+    width: 100%; 
+    background-color: var(--card-bg-color); 
+    border-radius: 12px; 
+    padding: 15px; 
+    display: flex; 
+    flex-direction: column; 
+    gap: 15px; /* Уменьшаем гэп */
+    margin-top: 10px; /* Уменьшаем отступ сверху */
+    box-sizing: border-box; /* Добавляем box-sizing */
+}
+.contest-header { 
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center; 
+    font-size: 16px; 
+    color: var(--primary-text-color); 
+    flex-wrap: wrap; /* Добавляем перенос */
+    gap: 5px; /* Добавляем гэп */
+}
+.contest-header__title { 
+    font-weight: bold; 
+}
+.contest-header__timer { 
+    color: var(--secondary-text-color); 
+    font-size: 14px; 
+}
+.contest-item { 
+    display: flex; 
+    gap: 15px; 
+    align-items: center; /* Выравниваем по центру */
+}
+.contest-item__image { 
+    width: 80px; 
+    height: 80px; 
+    object-fit: contain; 
+    background-color: var(--bg-color); 
+    border-radius: 12px; 
+    flex-shrink: 0; 
+}
+.contest-item__info { 
+    display: flex; 
+    flex-direction: column; 
+    gap: 8px; 
+    flex-grow: 1; /* Растягиваем блок */
+}
+.contest-item__name { 
+    font-size: 18px; 
+    font-weight: bold; 
+}
+.contest-item__meta { 
+    display: flex; 
+    align-items: center; 
+    gap: 10px; /* Уменьшаем гэп */
+    font-size: 13px; /* Уменьшаем шрифт */
+    color: var(--secondary-text-color); 
+    flex-wrap: wrap; /* Добавляем перенос */
+}
+.contest-item__link { 
+    color: var(--accent-color); 
+    text-decoration: none; 
+}
+.contest-item__link:hover { text-decoration: underline; }
+
+.purchase-section { 
+    display: flex; 
+    flex-direction: column; 
+    gap: 10px; /* Добавляем гэп */
+}
+.purchase-section__title { 
+    font-size: 14px; 
+    color: var(--secondary-text-color); 
+    margin: 0; 
+}
+.purchase-controls { 
+    display: flex; 
+    gap: 10px; 
+    align-items: stretch; /* Выравниваем по высоте */
+}
+.purchase-controls .primary-button { 
+    flex-grow: 1; 
+    padding: 10px; /* Уменьшаем паддинг */
+    font-size: 14px; /* Уменьшаем шрифт */
+}
+.quantity-control { 
+    display: flex; 
+    align-items: center; 
+    background-color: var(--dark-button-bg); 
+    border-radius: 12px; 
+}
+.quantity-control__btn { 
+    background: transparent; 
+    border: none; 
+    color: var(--primary-text-color); 
+    font-size: 20px; 
+    font-weight: bold; 
+    cursor: pointer; 
+    width: 35px; /* Уменьшаем ширину */
+    height: 100%; /* Растягиваем по высоте */
+}
+.quantity-control__input { 
+    width: 40px; 
+    background: transparent; 
+    border: none; 
+    color: var(--primary-text-color); 
+    text-align: center; 
+    font-size: 16px; 
+    font-weight: bold; 
+    pointer-events: none; 
+}
+
+#upgrade-view { justify-content: flex-start; }
+.upgrade-container { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; flex-grow: 1; }
+.upgrade-top-panel { flex-shrink: 0; width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.upgrade-wheel-container { position: relative; width: 150px; height: 150px; display: flex; justify-content: center; align-items: center; flex-shrink: 0; margin: 0 auto; }
+.upgrade-pointer { position: absolute; top: -10px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 10px solid transparent; border-right: 10px solid transparent; border-top: 15px solid var(--accent-color); z-index: 10; transition: transform 6s cubic-bezier(0.2, 0.8, 0.2, 1); transform-origin: 50% 85px; }
+.upgrade-wheel { width: 100%; height: 100%; border-radius: 50%; background-color: var(--card-bg-color); display: flex; justify-content: center; align-items: center; padding: 15px; box-sizing: border-box; background-image: conic-gradient(var(--accent-color) 0deg, var(--card-bg-color) 0deg); transition: background-image 0.5s ease; }
+.upgrade-wheel-inner { width: 100%; height: 100%; background-color: var(--bg-color); border-radius: 50%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; text-align: center; }
+.upgrade-chance-display { font-size: 28px; font-weight: bold; }
+.upgrade-multiplier-display { font-size: 14px; color: var(--secondary-text-color); font-weight: 500; }
+.upgrade-slots-container { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 10px; flex-shrink: 0; }
+.upgrade-slot { flex-basis: 0; flex-grow: 1; height: 120px; background-color: var(--card-bg-color); border-radius: 12px; display: flex; flex-direction: column; justify-content: center; align-items: center; cursor: pointer; border: 2px dashed #4b5563; transition: all 0.2s; padding: 10px; box-sizing: border-box; }
+.upgrade-slot.active-selection { border-color: var(--accent-color); box-shadow: 0 0 15px rgba(59, 130, 246, 0.4); }
+.upgrade-slot .slot-placeholder { font-size: 40px; color: #4b5563; }
+.upgrade-slot .slot-content { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 8px; }
+.upgrade-slot .slot-content img { max-width: 50px; max-height: 50px; object-fit: contain; }
+.upgrade-slot .slot-content span { font-size: 14px; font-weight: 500; }
+.slot-label { font-size: 12px; color: var(--secondary-text-color); margin-top: 8px; }
+.upgrade-arrow { font-size: 24px; color: var(--secondary-text-color); }
+#upgrade-button-container { width: 100%; margin-top: 5px; flex-shrink: 0; }
+#perform-upgrade-btn:disabled { background-color: var(--dark-button-bg); cursor: not-allowed; opacity: 0.6; }
+.upgrade-picker-container { width: 100%; display: flex; flex-direction: column; flex-grow: 1; overflow: hidden; }
+.item-picker-content { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 10px; padding: 10px; background-color: var(--card-bg-color); border-radius: 12px; margin-top: 10px; overflow-y: auto; flex-grow: 1; }
+.picker-item { display: flex; flex-direction: column; align-items: center; padding: 10px; background-color: var(--bg-color); border-radius: 8px; cursor: pointer; transition: all 0.2s; position: relative; border: 1px solid transparent; }
+.picker-item:hover { background-color: #374151; }
+.picker-item.selected { border-color: var(--accent-color); background-color: #3b82f630; }
+.picker-item img { width: 50px; height: 50px; object-fit: contain; }
+.picker-item-name { font-size: 12px; text-align: center; margin-top: 5px; color: var(--primary-text-color); }
+.picker-item-value { font-size: 10px; color: var(--secondary-text-color); }
+.picker-empty-msg { color: var(--secondary-text-color); text-align: center; width: 100%; margin-top: 40px; grid-column: 1 / -1; }
+
+/* --- ЭКРАНЫ ИГР (ОБЩИЕ СТИЛИ) --- */
+#games-menu-view { justify-content: flex-start; align-items: flex-start; padding-top: 10px; width: 100%; }
+.games-menu-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; width: 100%; padding: 15px; padding-right: 40px; box-sizing: border-box; }
+.game-menu-btn { background-color: var(--card-bg-color); border: 1px solid transparent; border-radius: 12px; padding: 15px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; cursor: pointer; transition: all 0.2s ease; color: var(--primary-text-color); font-size: 14px; font-weight: 500; text-align: center; }
+.game-menu-btn:hover { background-color: var(--accent-color); transform: translateY(-3px); box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3); }
+.game-menu-btn img { width: 48px; height: 48px; object-fit: contain; }
+.game-menu-btn span { height: 30px; display: flex; align-items: center; justify-content: center; }
+
+/* --- ИГРА: ВЕЖА --- */
+#tower-view { justify-content: flex-start; overflow: hidden; }
+.tower-container { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; height: 100%; }
+.tower-max-win { color: var(--secondary-text-color); font-size: 16px; font-weight: 500; margin: 0; padding: 5px 15px; background-color: var(--card-bg-color); border-radius: 10px; flex-shrink: 0; }
+.tower-game-board { width: 100%; display: flex; flex-direction: column-reverse; justify-content: center; gap: 8px; margin: auto 0; flex-shrink: 0; }
+.tower-row { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; opacity: 0.7; }
+.tower-row.active { opacity: 1; }
+.tower-row.active .tower-cell { cursor: pointer; animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); } 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); } }
+.tower-cell { height: 50px; background-color: var(--card-bg-color); border-radius: 12px; border: 1px solid #4b5563; transition: all 0.2s; display: flex; justify-content: center; align-items: center; font-size: 16px; font-weight: 600; color: var(--primary-text-color); gap: 8px; }
+.tower-row.active .tower-cell:hover { border-color: var(--accent-color); transform: translateY(-3px); }
+.tower-cell.safe { background-color: #22c55e40; border-color: var(--success-color); }
+.tower-cell.danger { background-color: #ef444440; border-color: var(--error-color); }
+.tower-cell img { width: 24px; height: 24px; object-fit: contain; }
+.tower-controls { width: 100%; max-width: 300px; margin: auto auto 0 auto; padding: 10px 0 0 0; border-radius: 12px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.tower-controls .control-group { width: 100%; background-color: var(--card-bg-color); padding: 10px; border-radius: 12px; }
+.tower-controls .control-group label { font-size: 14px; margin-bottom: 6px; }
+.tower-controls .miner-input { width: 100%; box-sizing: border-box; padding: 8px; font-size: 16px; }
+.tower-cashout-controls { width: 100%; max-width: 300px; margin: auto auto 0 auto; padding: 10px 0 0 0; flex-shrink: 0; }
+#tower-start-btn { padding: 14px; font-size: 16px; }
+#tower-cashout-btn { width: 100%; padding: 14px; line-height: 1.2; }
+#tower-cashout-btn { background-color: var(--success-color); }
+#tower-cashout-btn:disabled { background-color: var(--dark-button-bg); opacity: 0.6; cursor: not-allowed; }
+
+/* --- ИГРА: МИНЕР --- */
+#miner-view { justify-content: flex-start; height: 100%; overflow: hidden; }
+.miner-container { width: 100%; display: flex; flex-direction: column; gap: 15px; height: 100%; }
+.miner-controls { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: 100%; background-color: var(--card-bg-color); padding: 10px; border-radius: 12px; flex-shrink: 0; }
+.miner-controls .primary-button, .miner-controls .secondary-button { width: 100%; padding: 14px; font-size: 16px; }
+.miner-grid { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(4, 1fr); gap: 8px; width: 100%; max-width: 300px; margin: 0 auto; flex-grow: 1; height: auto; margin-bottom: 15px; }
+.miner-cell { background-color: var(--card-bg-color); border-radius: 12px; cursor: pointer; transition: all 0.2s ease-in-out; display: flex; justify-content: center; align-items: center; border: 1px solid #4b5563; }
+.miner-cell:hover { background-color: #374151; transform: translateY(-3px); border-color: var(--accent-color); }
+.miner-cell.opened { background-color: var(--bg-color); cursor: default; transform: translateY(0); }
+.miner-cell.bomb { background-color: #ef444440; border-color: var(--error-color); }
+.miner-cell.opened.bomb img { animation: shake 0.5s; }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+.miner-cell img { width: 50%; height: 50%; object-fit: contain; opacity: 0; transition: opacity 0.3s ease; }
+.miner-cell.opened img { opacity: 1; }
+.miner-info-wrapper { flex-shrink: 0; width: 100%; margin-top: auto; }
+.miner-info { text-align: center; width: 100%; background-color: var(--card-bg-color); padding: 10px; border-radius: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.miner-info p { margin: 0; color: var(--secondary-text-color); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.miner-info span { color: var(--primary-text-color); font-weight: bold; font-size: 16px; }
+#miner-cashout-btn { background-color: var(--success-color); }
+#miner-cashout-btn:disabled { background-color: var(--dark-button-bg); opacity: 0.6; cursor: not-allowed; }
+
+/* --- ИГРА: СЛОТЫ --- */
+#slots-view { justify-content: space-around; }
+.slots-container { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 20px; }
+.slots-machine { width: 100%; max-width: 350px; height: 120px; background-color: var(--bg-color); border-radius: 16px; border: 2px solid #4b5563; padding: 10px; box-sizing: border-box; position: relative; }
+.slots-reels-container { width: 100%; height: 100%; display: flex; justify-content: space-around; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, transparent, black 20%, black 80%, transparent); mask-image: linear-gradient(to bottom, transparent, black 20%, black 80%, transparent); }
+.slots-reel { width: 30%; height: 100%; position: relative; overflow: hidden; }
+.slots-track { position: absolute; top: 0; left: 0; width: 100%; display: flex; flex-direction: column; align-items: center; }
+.slots-item { width: 80px; height: 80px; flex-shrink: 0; margin-bottom: 10px; display: flex; justify-content: center; align-items: center; }
+.slots-item img { max-width: 90%; max-height: 90%; }
+.slots-payline { position: absolute; top: 50%; left: -5px; right: -5px; height: 3px; background-color: var(--accent-color); transform: translateY(-50%); box-shadow: 0 0 10px var(--accent-color); opacity: 0; transition: opacity 0.3s; }
+.slots-payline.visible { opacity: 1; }
+.slots-controls { width: 100%; max-width: 350px; display: flex; flex-direction: column; align-items: center; gap: 20px; background-color: var(--card-bg-color); padding: 20px; border-radius: 12px; }
+#slots-spin-btn:disabled { background-color: var(--dark-button-bg); cursor: not-allowed; opacity: 0.6; }
+
+/* --- ДРУГИЕ ИГРЫ (COINFLIP, RPS) --- */
+#coinflip-view, #rps-view { justify-content: space-around; }
+.coinflip-container, .rps-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 15px; width: 100%; }
+.coin { width: 150px; height: 150px; position: relative; transform-style: preserve-3d; transition: transform 1s cubic-bezier(0.5, 1.3, 0.5, 1.3); }
+.coin.flipping { transform: rotateY(1800deg); }
+.coin-heads, .coin-tails { position: absolute; width: 100%; height: 100%; backface-visibility: hidden; display: flex; justify-content: center; align-items: center; }
+.coin-heads img, .coin-tails img { width: 120px; height: 120px; }
+.coin-tails { transform: rotateY(180deg); }
+.coinflip-result-message, .rps-result-message { font-size: 18px; font-weight: bold; min-height: 25px; }
+.coinflip-choices, .rps-buttons { display: flex; gap: 15px; }
+.rps-choices { display: flex; align-items: center; gap: 20px; font-weight: bold; }
+.rps-choice { width: 120px; height: 120px; background-color: var(--card-bg-color); border-radius: 12px; display: flex; justify-content: center; align-items: center; font-size: 64px; }
+.rps-vs { font-size: 24px; }
+
+.rps-spinner-container { width: 120px; position: relative; overflow: hidden; height: 120px; -webkit-mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent); mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent); background-color: var(--card-bg-color); border-radius: 12px; }
+.rps-spinner-pointer { position: absolute; top: -5px; left: 50%; transform: translateX(-50%); width: 3px; height: 130px; background-color: var(--accent-color); border-radius: 3px; z-index: 102; box-shadow: 0 0 10px var(--accent-color); }
+.rps-roulette-track { display: flex; position: relative; left: 0; align-items: center; height: 100%; }
+.rps-roulette-item { box-sizing: border-box; flex-shrink: 0; width: 120px; height: 110px; margin: 0 5px; display: flex; justify-content: center; align-items: center; text-align: center; font-size: 64px; background-color: var(--bg-color); border: 2px solid #4b5563; border-radius: 12px; }
