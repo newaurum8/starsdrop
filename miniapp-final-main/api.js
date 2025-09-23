@@ -10,9 +10,10 @@ async function callApi(endpoint, method = 'GET', body = null) {
             headers: { 'Content-Type': 'application/json' },
         };
         if (body) {
-            // Автоматически добавляем user_id (внутренний ID) во все POST запросы, если пользователь авторизован
+            // ИСПРАВЛЕНО: Добавляем и user_id, и telegram_id во все запросы
             if (STATE.user && STATE.user.id) {
                 body.user_id = STATE.user.id;
+                body.telegram_id = STATE.user.telegram_id;
             }
             options.body = JSON.stringify(body);
         }
@@ -73,7 +74,7 @@ export async function loadContestData() {
 export async function buyTickets(contestId, quantity) {
     return callApi('/api/contest/buy-ticket', 'POST', {
         contest_id: contestId,
-        telegram_id: STATE.user.telegram_id,
+        // telegram_id добавится автоматически через callApi
         quantity: quantity
     });
 }
