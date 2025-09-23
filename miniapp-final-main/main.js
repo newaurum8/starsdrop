@@ -134,7 +134,8 @@ async function initializeApp() {
 
             const userData = await api.authenticateUser(user);
             STATE.user = userData;
-            STATE.userBalance = userData.balance;
+            // ИСПРАВЛЕНО: читаем balance_uah
+            STATE.userBalance = userData.balance_uah;
             updateBalanceDisplay(STATE.userBalance);
 
             fetchAndRenderInventory();
