@@ -35,23 +35,23 @@ app.use(express.json());
 
 
 // --- ХЕЛПЕР ДЛЯ ПРЯМОГО ИЗМЕНЕНИЯ БАЛАНСА В БД ---
-async function updateUserBalanceDirectly(client, userId, delta) {
-    const userBalanceQuery = await client.query("SELECT balance FROM users WHERE id = $1 FOR UPDATE", [userId]);
+async function updateUserBalanceDirectly(client, telegramId, delta) {
+    const userBalanceQuery = await client.query("SELECT balance_uah FROM users WHERE telegram_id = $1 FOR UPDATE", [telegramId]);
     if (userBalanceQuery.rows.length === 0) {
         throw new Error('Пользователь не найден для обновления баланса.');
     }
 
-    const currentBalance = userBalanceQuery.rows[0].balance;
-    if (currentBalance + delta < 0) {
+    const currentBalance = userBalanceQuery.rows[0].balance_uah;
+    if (parseFloat(currentBalance) + delta < 0) {
         throw new Error('Недостаточно средств');
     }
 
     const result = await client.query(
-        "UPDATE users SET balance = balance + $1 WHERE id = $2 RETURNING balance",
-        [delta, userId]
+        "UPDATE users SET balance_uah = balance_uah + $1 WHERE telegram_id = $2 RETURNING balance_uah",
+        [delta, telegramId]
     );
 
-    return { new_balance: result.rows[0].balance };
+    return { new_balance: result.rows[0].balance_uah };
 }
 
 
@@ -88,7 +88,7 @@ async function initializeDb() {
                 id SERIAL PRIMARY KEY,
                 telegram_id BIGINT UNIQUE,
                 username TEXT,
-                balance INTEGER NOT NULL DEFAULT 1000
+                balance_uah NUMERIC(10, 2) NOT NULL DEFAULT 1000.00
             );
         `);
 
@@ -199,7 +199,7 @@ app.post('/api/user/get-or-create', async (req, res) => {
         } else {
             const initialBalance = 1000;
             const newUserResult = await pool.query(
-                "INSERT INTO users (telegram_id, username, balance) VALUES ($1, $2, $3) RETURNING *",
+                "INSERT INTO users (telegram_id, username, balance_uah) VALUES ($1, $2, $3) RETURNING *",
                 [telegram_id, username, initialBalance]
             );
             res.status(201).json(newUserResult.rows[0]);
@@ -230,8 +230,8 @@ app.get('/api/user/inventory', async (req, res) => {
 });
 
 app.post('/api/user/inventory/sell', async (req, res) => {
-    const { user_id, unique_id } = req.body;
-    if (!user_id || !unique_id) {
+    const { user_id, unique_id, telegram_id } = req.body;
+    if (!user_id || !unique_id || !telegram_id) {
         return res.status(400).json({ error: 'Неверные данные для продажи' });
     }
     const client = await pool.connect();
@@ -245,7 +245,7 @@ app.post('/api/user/inventory/sell', async (req, res) => {
         
         const itemValue = itemResult.rows[0].value;
         
-        const balanceResponse = await updateUserBalanceDirectly(client, user_id, itemValue);
+        const balanceResponse = await updateUserBalanceDirectly(client, telegram_id, itemValue);
         
         await client.query("DELETE FROM user_inventory WHERE id = $1", [unique_id]);
         
@@ -263,8 +263,8 @@ app.post('/api/user/inventory/sell', async (req, res) => {
 });
 
 app.post('/api/user/inventory/sell-multiple', async (req, res) => {
-    const { user_id, unique_ids } = req.body;
-    if (!user_id || !Array.isArray(unique_ids) || unique_ids.length === 0) {
+    const { user_id, unique_ids, telegram_id } = req.body;
+    if (!user_id || !Array.isArray(unique_ids) || unique_ids.length === 0 || !telegram_id) {
         return res.status(400).json({ error: 'Неверные данные для массовой продажи' });
     }
     const client = await pool.connect();
@@ -286,7 +286,7 @@ app.post('/api/user/inventory/sell-multiple', async (req, res) => {
         
         const totalValue = parseInt(itemsResult.rows[0].total_value, 10);
         
-        const balanceResponse = await updateUserBalanceDirectly(client, user_id, totalValue);
+        const balanceResponse = await updateUserBalanceDirectly(client, telegram_id, totalValue);
         
         // Удаляем все предметы одним запросом
         await client.query(`DELETE FROM user_inventory WHERE id IN (${placeholders}) AND user_id = $1`, [user_id, ...unique_ids]);
@@ -326,11 +326,11 @@ app.get('/api/case/items_full', async (req, res) => {
 });
 
 app.post('/api/case/open', async (req, res) => {
-    const { user_id, quantity } = req.body;
+    const { user_id, quantity, telegram_id } = req.body;
     const casePrice = 100;
     const totalCost = casePrice * (quantity || 1);
 
-    if (!user_id || !quantity || quantity < 1) {
+    if (!user_id || !quantity || quantity < 1 || !telegram_id) {
         return res.status(400).json({ error: 'Неверные данные для открытия кейса' });
     }
 
@@ -338,7 +338,7 @@ app.post('/api/case/open', async (req, res) => {
     try {
         await client.query('BEGIN');
         
-        const balanceResponse = await updateUserBalanceDirectly(client, user_id, -totalCost);
+        const balanceResponse = await updateUserBalanceDirectly(client, telegram_id, -totalCost);
 
         const caseItemsResult = await client.query('SELECT i.id, i.name, i."imageSrc", i.value FROM items i JOIN case_items ci ON i.id = ci.item_id WHERE ci.case_id = 1');
         let caseItems;
@@ -438,7 +438,7 @@ app.post('/api/contest/buy-ticket', async (req, res) => {
 
         const totalCost = contest.ticket_price * quantity;
         
-        const balanceResponse = await updateUserBalanceDirectly(client, user.id, -totalCost);
+        const balanceResponse = await updateUserBalanceDirectly(client, telegram_id, -totalCost);
 
         for (let i = 0; i < quantity; i++) {
             await client.query("INSERT INTO user_tickets (contest_id, user_id, telegram_id) VALUES ($1, $2, $3)", [contest_id, user.id, telegram_id]);
@@ -460,7 +460,7 @@ app.use('/api/admin', checkAdminSecret);
 
 app.get('/api/admin/users', async (req, res) => {
     try {
-        const { rows } = await pool.query("SELECT id, telegram_id, username, balance FROM users ORDER BY id DESC");
+        const { rows } = await pool.query("SELECT id, telegram_id, username, balance_uah FROM users ORDER BY id DESC");
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -470,7 +470,7 @@ app.get('/api/admin/users', async (req, res) => {
 app.post('/api/admin/user/balance', async (req, res) => {
     const { userId, newBalance } = req.body;
     try {
-        const result = await pool.query("UPDATE users SET balance = $1 WHERE id = $2", [newBalance, userId]);
+        const result = await pool.query("UPDATE users SET balance_uah = $1 WHERE id = $2", [newBalance, userId]);
         res.json({ success: true, changes: result.rowCount });
     } catch (err) {
         res.status(500).json({ "error": err.message });
