@@ -10,7 +10,6 @@ async function callApi(endpoint, method = 'GET', body = null) {
             headers: { 'Content-Type': 'application/json' },
         };
         if (body) {
-            // ИСПРАВЛЕНО: Добавляем и user_id, и telegram_id во все запросы
             if (STATE.user && STATE.user.id) {
                 body.user_id = STATE.user.id;
                 body.telegram_id = STATE.user.telegram_id;
@@ -38,7 +37,10 @@ export async function authenticateUser(tgUser) {
 
 export async function loadInventory() {
     if (!STATE.user || !STATE.user.id) return [];
-    return callApi(`/api/user/inventory?user_id=${STATE.user.id}`);
+    // Используем GET запрос с query параметром
+    const response = await fetch(`/api/user/inventory?user_id=${STATE.user.id}`);
+    if (!response.ok) throw new Error("Ошибка загрузки инвентаря");
+    return await response.json();
 }
 
 export async function sellFromInventory(uniqueId) {
@@ -74,7 +76,6 @@ export async function loadContestData() {
 export async function buyTickets(contestId, quantity) {
     return callApi('/api/contest/buy-ticket', 'POST', {
         contest_id: contestId,
-        // telegram_id добавится автоматически через callApi
         quantity: quantity
     });
 }
@@ -90,4 +91,33 @@ export async function loadInitialData() {
     const possibleItems = await caseResponse.json();
     const gameSettings = await settingsResponse.json();
     return { possibleItems, gameSettings };
+}
+
+// --- НОВЫЕ ФУНКЦИИ ДЛЯ ИГР ---
+
+export async function playGameCoinflip(bet, choice) {
+    return callApi('/api/games/coinflip', 'POST', {
+        bet: bet,
+        choice: choice
+    });
+}
+
+export async function playGameRps(bet, choice) {
+    return callApi('/api/games/rps', 'POST', {
+        bet: bet,
+        choice: choice
+    });
+}
+
+export async function playGameSlots(bet) {
+    return callApi('/api/games/slots', 'POST', {
+        bet: bet
+    });
+}
+
+export async function performUpgrade(yourItemUniqueId, desiredItemId) {
+    return callApi('/api/games/upgrade', 'POST', {
+        yourItemUniqueId: yourItemUniqueId,
+        desiredItemId: desiredItemId
+    });
 }
