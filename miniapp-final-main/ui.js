@@ -253,17 +253,83 @@ export function updatePriceMessage() {
 }
 
 export function startHorizontalAnimation(wonItem, possibleItems, isFast, onEnd) {
-    // !!! ЛОГИКА ЭТОЙ ФУНКЦИИ ОТСУТСТВОВАЛА
-    console.log("Start horizontal animation for:", wonItem);
-    // Здесь должна быть логика анимации рулетки
-    setTimeout(onEnd, isFast ? 500 : 3000); // Эмуляция
+    if (!UI.rouletteTrack) return;
+
+    const reelLength = 50;
+    const winnerIndex = 40; // Индекс, на котором остановится рулетка
+
+    // Создаем ленту рулетки
+    const reelItems = Array.from({ length: reelLength }, (_, i) => {
+        const item = i === winnerIndex ? wonItem : possibleItems[Math.floor(Math.random() * possibleItems.length)];
+        return `
+            <div class="roulette-item">
+                <img src="${item.imageSrc}" alt="${item.name}">
+            </div>
+        `;
+    }).join('');
+    UI.rouletteTrack.innerHTML = reelItems;
+
+    // Сбрасываем и запускаем анимацию
+    UI.rouletteTrack.style.transition = 'none';
+    UI.rouletteTrack.style.left = '0px';
+    UI.rouletteTrack.offsetHeight; // Вызываем reflow для применения стилей
+
+    const itemWidth = 130; // Ширина .roulette-item + margin
+    const targetPosition = (winnerIndex * itemWidth) - (UI.spinnerContainer.offsetWidth / 2) + (itemWidth / 2);
+    const duration = isFast ? 1 : 7;
+
+    UI.rouletteTrack.style.transition = `left ${duration}s cubic-bezier(0.2, 0.8, 0.2, 1)`;
+    UI.rouletteTrack.style.left = `-${targetPosition}px`;
+
+    setTimeout(onEnd, duration * 1000);
 }
 
+
 export function startMultiVerticalAnimation(wonItems, possibleItems, isFast, onEnd) {
-    // !!! ЛОГИКА ЭТОЙ ФУНКЦИИ ОТСУТСТВОВАЛА
-    console.log("Start multi-vertical animation for:", wonItems);
-    // Здесь должна быть логика анимации для нескольких предметов
-    setTimeout(onEnd, isFast ? 500 : 3000); // Эмуляция
+    if (!UI.multiSpinnerContainer) return;
+
+    UI.multiSpinnerContainer.innerHTML = '';
+    UI.multiSpinnerContainer.classList.remove('hidden');
+    UI.spinnerContainer.classList.add('hidden'); // Скрываем одиночный спиннер
+
+    const reelLength = 30;
+    const winnerIndex = 25;
+    let finishedReels = 0;
+
+    wonItems.forEach((wonItem, index) => {
+        const spinner = document.createElement('div');
+        spinner.className = 'vertical-spinner';
+        spinner.innerHTML = '<div class="vertical-roulette-track"></div>';
+        const track = spinner.querySelector('.vertical-roulette-track');
+
+        const reelItems = Array.from({ length: reelLength }, (_, i) => {
+             const item = i === winnerIndex ? wonItem : possibleItems[Math.floor(Math.random() * possibleItems.length)];
+             return `<div class="vertical-roulette-item"><img src="${item.imageSrc}" alt="${item.name}"></div>`;
+        }).join('');
+        track.innerHTML = reelItems;
+
+        UI.multiSpinnerContainer.appendChild(spinner);
+
+        setTimeout(() => {
+            track.style.transition = 'none';
+            track.style.top = '0px';
+            track.offsetHeight;
+
+            const itemHeight = 110; // .vertical-roulette-item height + margin
+            const targetPosition = (winnerIndex * itemHeight) - (spinner.offsetHeight / 2) + (itemHeight / 2);
+            const duration = isFast ? 1 : 5 + index * 0.3;
+
+            track.style.transition = `top ${duration}s cubic-bezier(0.25, 1, 0.5, 1)`;
+            track.style.top = `-${targetPosition}px`;
+
+            track.addEventListener('transitionend', () => {
+                finishedReels++;
+                if (finishedReels === wonItems.length) {
+                    onEnd();
+                }
+            }, { once: true });
+        }, 100);
+    });
 }
 
 export function showResultModal(wonItems, sellCallback, againCallback, closeCallback) {
