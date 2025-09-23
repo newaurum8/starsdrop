@@ -121,3 +121,29 @@ export async function performUpgrade(yourItemUniqueId, desiredItemId) {
         desiredItemId: desiredItemId
     });
 }
+
+// --- API ДЛЯ MINER И TOWER ---
+
+export async function startMinerGame(bet) {
+    return callApi('/api/games/miner/start', 'POST', { bet });
+}
+
+export async function selectMinerCell(sessionId, cellIndex) {
+    return callApi('/api/games/miner/select', 'POST', { sessionId, cellIndex });
+}
+
+export async function cashoutMiner(sessionId) {
+    return callApi('/api/games/miner/cashout', 'POST', { sessionId });
+}
+
+export async function startTowerGame(bet) {
+    return callApi('/api/games/tower/start', 'POST', { bet });
+}
+
+export async function selectTowerCell(sessionId, col) {
+    return callApi('/api/games/tower/select', 'POST', { sessionId, col });
+}
+
+export async function cashoutTower(sessionId) {
+    return callApi('/api/games/tower/cashout', 'POST', { sessionId });
+}
