@@ -396,6 +396,136 @@ app.get('/api/contest/current', async (req, res) => {
     }
 });
 
+// --- API ИГР ---
+
+app.post('/api/games/coinflip', async (req, res) => {
+    const { telegram_id, bet, choice } = req.body;
+    if (!telegram_id || !bet || !choice || bet <= 0) {
+        return res.status(400).json({ error: 'Неверные параметры игры' });
+    }
+    try {
+        const result = Math.random() < 0.5 ? 'heads' : 'tails';
+        const winAmount = result === choice ? bet * 2 : 0;
+        const delta = winAmount - bet;
+        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, delta, `coinflip_bet_${bet}_choice_${choice}`);
+        res.json({
+            success: true,
+            result: result,
+            winAmount: winAmount,
+            newBalance: balanceResponse.new_balance
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/games/rps', async (req, res) => {
+    const { telegram_id, bet, choice } = req.body;
+    if (!telegram_id || !bet || !choice || bet <= 0) {
+        return res.status(400).json({ error: 'Неверные параметры игры' });
+    }
+    const choices = ['rock', 'paper', 'scissors'];
+    if (!choices.includes(choice)) {
+        return res.status(400).json({ error: 'Неверный выбор' });
+    }
+    try {
+        const computerChoice = choices[Math.floor(Math.random() * 3)];
+        let winAmount = 0;
+        if (choice === computerChoice) {
+            winAmount = bet;
+        } else if (
+            (choice === 'rock' && computerChoice === 'scissors') ||
+            (choice === 'paper' && computerChoice === 'rock') ||
+            (choice === 'scissors' && computerChoice === 'paper')
+        ) {
+            winAmount = bet * 2;
+        }
+        const delta = winAmount - bet;
+        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, delta, `rps_bet_${bet}_choice_${choice}`);
+        res.json({
+            success: true,
+            playerChoice: choice,
+            computerChoice: computerChoice,
+            winAmount: winAmount,
+            newBalance: balanceResponse.new_balance
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/games/slots', async (req, res) => {
+    const { telegram_id, bet } = req.body;
+    if (!telegram_id || !bet || bet <= 0) {
+        return res.status(400).json({ error: 'Неверные параметры игры' });
+    }
+    try {
+        const symbols = ['Lemon', 'Cherry', 'Seven'];
+        const results = [
+            symbols[Math.floor(Math.random() * symbols.length)],
+            symbols[Math.floor(Math.random() * symbols.length)],
+            symbols[Math.floor(Math.random() * symbols.length)]
+        ];
+        let winAmount = 0;
+        if (results[0] === results[1] && results[1] === results[2]) {
+            winAmount = bet * 5;
+        } else if (results[0] === results[1] || results[1] === results[2]) {
+            winAmount = bet * 2;
+        }
+        const delta = winAmount - bet;
+        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, delta, `slots_bet_${bet}`);
+        res.json({
+            success: true,
+            reels: results,
+            winAmount: winAmount,
+            newBalance: balanceResponse.new_balance
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/games/upgrade', async (req, res) => {
+    const { telegram_id, user_id, yourItemUniqueId, desiredItemId } = req.body;
+    if (!telegram_id || !user_id || !yourItemUniqueId || !desiredItemId) {
+        return res.status(400).json({ error: 'Неверные параметры для апгрейда' });
+    }
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const yourItemRes = await client.query('SELECT i.id, i.name, i."imageSrc", i.value FROM user_inventory ui JOIN items i ON ui.item_id = i.id WHERE ui.id = $1 AND ui.user_id = $2', [yourItemUniqueId, user_id]);
+        const desiredItemRes = await client.query('SELECT * FROM items WHERE id = $1', [desiredItemId]);
+        if (yourItemRes.rows.length === 0 || desiredItemRes.rows.length === 0) {
+            throw new Error('Предмет не найден');
+        }
+        const yourItem = yourItemRes.rows[0];
+        const desiredItem = desiredItemRes.rows[0];
+        const maxChance = 95;
+        let chance = (yourItem.value / desiredItem.value) * (maxChance / 100) * 100;
+        if (desiredItem.value <= yourItem.value) chance = maxChance;
+        chance = Math.min(chance, maxChance);
+        const isSuccess = Math.random() * 100 < chance;
+        await client.query('DELETE FROM user_inventory WHERE id = $1 AND user_id = $2', [yourItemUniqueId, user_id]);
+        let newItem = null;
+        if (isSuccess) {
+            const newItemRes = await client.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2) RETURNING id', [user_id, desiredItem.id]);
+            newItem = { ...desiredItem, uniqueId: newItemRes.rows[0].id };
+        }
+        await client.query('COMMIT');
+        res.json({
+            success: true,
+            isSuccess: isSuccess,
+            newItem: newItem,
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: error.message });
+    } finally {
+        client.release();
+    }
+});
+
+
 // --- API Маршруты (админские) ---
 // ... (админские маршруты остаются без изменений, кроме updateUserBalance)
 
