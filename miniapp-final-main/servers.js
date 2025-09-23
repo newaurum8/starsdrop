@@ -4,10 +4,8 @@ const cors = require('cors');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
-// Загружаем переменные окружения из .env файла
 require('dotenv').config();
 
-// --- ПРОВЕРКА КЛЮЧЕВЫХ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ---
 const requiredEnvVars = ['DATABASE_URL', 'ADMIN_SECRET'];
 const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
 
@@ -16,7 +14,6 @@ if (missingEnvVars.length > 0) {
     process.exit(1);
 }
 
-// --- ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ ---
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -30,11 +27,15 @@ const pool = new Pool({
     }
 });
 
+pool.on('error', (err, client) => {
+    console.error('Неожиданная ошибка в работе с базой данных', err);
+    process.exit(-1);
+});
+
 app.use(cors());
 app.use(express.json());
 
 
-// --- ХЕЛПЕР ДЛЯ ПРЯМОГО ИЗМЕНЕНИЯ БАЛАНСА В БД ---
 async function updateUserBalanceDirectly(client, telegramId, delta) {
     const userBalanceQuery = await client.query("SELECT balance_uah FROM users WHERE telegram_id = $1 FOR UPDATE", [telegramId]);
     if (userBalanceQuery.rows.length === 0) {
@@ -55,11 +56,9 @@ async function updateUserBalanceDirectly(client, telegramId, delta) {
 }
 
 
-// --- ОТДАЧА СТАТИЧЕСКИХ ФАЙЛОВ ---
 app.use(express.static(__dirname));
 app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
-// --- ЗАЩИТА АДМИН-ПАНЕЛИ ---
 const checkAdminSecret = (req, res, next) => {
     const secret = req.query.secret || req.body.secret;
     if (secret === ADMIN_SECRET) {
@@ -69,7 +68,6 @@ const checkAdminSecret = (req, res, next) => {
     }
 };
 
-// --- ОСНОВНЫЕ МАРШРУТЫ ---
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/admin', (req, res) => {
     checkAdminSecret(req, res, () => {
@@ -77,22 +75,21 @@ app.get('/admin', (req, res) => {
     });
 });
 
-// --- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ---
 async function initializeDb() {
     const client = await pool.connect();
     try {
         console.log('Успешное подключение к базе данных PostgreSQL');
 
-        // Используем balance_uah как в боте
         await client.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
+                user_id BIGINT UNIQUE,
                 telegram_id BIGINT UNIQUE,
-                username TEXT,
-                balance_uah NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+                username VARCHAR(255),
                 chosen_currency VARCHAR(10),
                 chosen_game VARCHAR(50),
                 registration_date TIMESTAMPTZ DEFAULT NOW(),
+                balance_uah NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
                 games_played INT DEFAULT 0,
                 total_wagered NUMERIC(10, 2) DEFAULT 0.00,
                 total_purchased_uah NUMERIC(10, 2) DEFAULT 0.00,
@@ -201,8 +198,6 @@ async function initializeDb() {
 }
 
 
-// --- API Маршруты (клиентские) ---
-
 app.post('/api/user/get-or-create', async (req, res) => {
     const { telegram_id, username } = req.body;
     if (!telegram_id) {
@@ -213,11 +208,10 @@ app.post('/api/user/get-or-create', async (req, res) => {
         if (userResult.rows.length > 0) {
             res.json(userResult.rows[0]);
         } else {
-            // ИСПРАВЛЕНО: Начальный баланс теперь 0.00
             const initialBalance = 0.00;
             const newUserResult = await pool.query(
-                "INSERT INTO users (telegram_id, username, balance_uah) VALUES ($1, $2, $3) RETURNING *",
-                [telegram_id, username, initialBalance]
+                "INSERT INTO users (telegram_id, user_id, username, balance_uah) VALUES ($1, $2, $3, $4) RETURNING *",
+                [telegram_id, telegram_id, username, initialBalance]
             );
             res.status(201).json(newUserResult.rows[0]);
         }
@@ -470,7 +464,6 @@ app.post('/api/contest/buy-ticket', async (req, res) => {
     }
 });
 
-// --- API Маршруты (админские) ---
 app.use('/api/admin', checkAdminSecret);
 
 app.get('/api/admin/users', async (req, res) => {
