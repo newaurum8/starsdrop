@@ -121,7 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
             label.className = 'item-label';
             label.innerHTML = `
                 <input type="checkbox" data-itemid="${item.id}" ${isChecked ? 'checked' : ''}>
-                <img src="/${item.imageSrc}" alt="${item.name}">
+                <img src="../${item.imageSrc}" alt="${item.name}">
                 <span>${item.name}</span>
             `;
             caseItemsContainer.appendChild(label);
