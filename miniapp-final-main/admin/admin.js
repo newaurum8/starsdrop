@@ -75,7 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>${user.id}</td>
                 <td>${user.telegram_id || 'N/A'}</td>
                 <td>${user.username || 'N/A'}</td>
-                <td><input type="number" class="balance-input" value="${user.balance}"></td>
+                <td><input type="number" class="balance-input" value="${user.balance_uah}"></td>
                 <td><button class="button-primary save-balance-btn" data-userid="${user.id}">Сохранить</button></td>
             `;
             usersTableBody.appendChild(row);
@@ -103,7 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.classList.contains('save-balance-btn')) {
             const userId = e.target.dataset.userid;
             const balanceInput = e.target.closest('tr').querySelector('.balance-input');
-            const newBalance = parseInt(balanceInput.value, 10);
+            const newBalance = parseFloat(balanceInput.value);
             if (!isNaN(newBalance) && newBalance >= 0) {
                 updateUserBalance(userId, newBalance);
             } else {
