@@ -1,5 +1,7 @@
 // ui.js
 
+import { STATE } from './state.js'; // Убедимся, что STATE импортирован для использования в функциях
+
 export const UI = {};
 
 export function cacheDOMElements() {
@@ -145,4 +147,151 @@ export function applyGameSettings(gameSettings) {
             btn.style.display = (gameButtonsVisibility[view] === 'false' ? 'none' : '');
         }
     });
+}
+
+// --- НИЖЕ ИДУТ ФУНКЦИИ, КОТОРЫЕ ОТСУТСТВОВАЛИ В ВАШЕМ ФАЙЛЕ ---
+
+export function renderInventory(inventory, sellCallback) {
+    // !!! ЛОГИКА ЭТОЙ ФУНКЦИИ ОТСУТСТВОВАЛА
+    // Примерная реализация:
+    if (!UI.inventoryContent) return;
+    UI.inventoryContent.innerHTML = '';
+    if (inventory.length === 0) {
+        UI.inventoryContent.innerHTML = '<p class="inventory-empty-msg">Ваш инвентарь пуст.</p>';
+        return;
+    }
+    inventory.forEach(item => {
+        const itemEl = document.createElement('div');
+        itemEl.className = 'inventory-item';
+        itemEl.innerHTML = `
+            <img src="${item.imageSrc}" alt="${item.name}">
+            <div class="inventory-item-name">${item.name}</div>
+            <div class="inventory-item-price">⭐ ${item.value.toLocaleString('ru-RU')}</div>
+            <button class="inventory-sell-btn" data-uniqueid="${item.uniqueId}">Продать</button>
+        `;
+        itemEl.querySelector('.inventory-sell-btn').addEventListener('click', (e) => {
+            const uniqueId = e.target.dataset.uniqueid;
+            sellCallback(uniqueId);
+        });
+        UI.inventoryContent.appendChild(itemEl);
+    });
+}
+
+export function renderHistory(history) {
+    // !!! ЛОГИКА ЭТОЙ ФУНКЦИИ ОТСУТСТВОВАЛА
+    // Примерная реализация:
+    if (!UI.historyContent) return;
+    UI.historyContent.innerHTML = '';
+     if (history.length === 0) {
+        UI.historyContent.innerHTML = '<p class="inventory-empty-msg">История пуста.</p>';
+        return;
+    }
+    history.forEach(item => {
+        const itemEl = document.createElement('div');
+        itemEl.className = 'history-item';
+        const date = new Date(item.date).toLocaleString();
+        itemEl.innerHTML = `
+            <img src="${item.imageSrc}" alt="${item.name}">
+            <div class="history-item-info">
+                <span class="history-item-name">${item.name}</span>
+                <span class="history-item-date">${date}</span>
+            </div>
+            <span class="history-item-price">⭐ ${item.value.toLocaleString('ru-RU')}</span>
+        `;
+        UI.historyContent.appendChild(itemEl);
+    });
+}
+
+export function populateCasePreview(items) {
+    // !!! ЛОГИКА ЭТОЙ ФУНКЦИИ ОТСУТСТВОВАЛА
+    if (!UI.caseContentsPreview) return;
+    UI.caseContentsPreview.innerHTML = items.map(item => `
+        <div class="preview-item">
+            <img src="${item.imageSrc}" alt="${item.name}">
+        </div>
+    `).join('');
+}
+
+export function updateContestUI() {
+    // !!! ЛОГИКА ЭТОЙ ФУНКЦИИ ОТСУТСТВОВАЛА
+    if (!UI.contestCard || !STATE.contest) return;
+    UI.contestItemImage.src = STATE.contest.itemImageSrc;
+    UI.contestItemName.textContent = STATE.contest.itemName;
+    UI.contestParticipants.textContent = `👥 ${STATE.contest.participants}`;
+    UI.userTicketsDisplay.textContent = STATE.contest.userTickets;
+    UI.ticketQuantityInput.value = STATE.ticketQuantity;
+    UI.buyTicketBtn.textContent = `Купить (${STATE.contest.ticket_price * STATE.ticketQuantity} ⭐)`;
+}
+
+export function updateTimer() {
+    // !!! ЛОГИКА ЭТОЙ ФУНКЦИИ ОТСУТСТВОВАЛА
+    if (!UI.contestTimer || !STATE.contest) {
+         if(UI.contestTimer) UI.contestTimer.textContent = '00:00:00';
+         return;
+    }
+    const remaining = STATE.contest.end_time - Date.now();
+    if (remaining <= 0) {
+        UI.contestTimer.textContent = 'Завершен';
+        return;
+    }
+    const h = String(Math.floor(remaining / 3600000)).padStart(2, '0');
+    const m = String(Math.floor((remaining % 3600000) / 60000)).padStart(2, '0');
+    const s = String(Math.floor((remaining % 60000) / 1000)).padStart(2, '0');
+    UI.contestTimer.textContent = `${h}:${m}:${s}`;
+}
+
+export function updatePriceMessage() {
+    // !!! ЛОГИКА ЭТОЙ ФУНКЦИИ ОТСУТСТВОВАЛА
+    if (!UI.priceCheckMessage) return;
+    const totalCost = STATE.casePrice * STATE.openQuantity;
+    UI.priceCheckMessage.textContent = `⭐ ${totalCost}`;
+    if (STATE.userBalance < totalCost) {
+        UI.priceCheckMessage.classList.add('error');
+    } else {
+        UI.priceCheckMessage.classList.remove('error');
+    }
+}
+
+export function startHorizontalAnimation(wonItem, possibleItems, isFast, onEnd) {
+    // !!! ЛОГИКА ЭТОЙ ФУНКЦИИ ОТСУТСТВОВАЛА
+    console.log("Start horizontal animation for:", wonItem);
+    // Здесь должна быть логика анимации рулетки
+    setTimeout(onEnd, isFast ? 500 : 3000); // Эмуляция
+}
+
+export function startMultiVerticalAnimation(wonItems, possibleItems, isFast, onEnd) {
+    // !!! ЛОГИКА ЭТОЙ ФУНКЦИИ ОТСУТСТВОВАЛА
+    console.log("Start multi-vertical animation for:", wonItems);
+    // Здесь должна быть логика анимации для нескольких предметов
+    setTimeout(onEnd, isFast ? 500 : 3000); // Эмуляция
+}
+
+export function showResultModal(wonItems, sellCallback, againCallback, closeCallback) {
+    // !!! ЛОГИКА ЭТОЙ ФУНКЦИИ ОТСУТСТВОВАЛА
+    if (!UI.resultModal) return;
+    const totalValue = wonItems.reduce((sum, item) => sum + item.value, 0);
+    UI.resultModal.innerHTML = `
+        <div class="modal-content">
+            <h3>Ваш выигрыш!</h3>
+            <div class="result-items-container">
+                ${wonItems.map(item => `
+                    <div class="inventory-item">
+                        <img src="${item.imageSrc}" alt="${item.name}">
+                        <div class="inventory-item-name">${item.name}</div>
+                        <div class="inventory-item-price">⭐ ${item.value}</div>
+                    </div>
+                `).join('')}
+            </div>
+            <p>Общая стоимость: ⭐ ${totalValue}</p>
+            <div class="result-buttons">
+                <button id="result-sell-all" class="secondary-button">Продать все</button>
+                <button id="result-spin-again" class="primary-button">Крутить еще</button>
+            </div>
+             <button id="result-close" class="secondary-button" style="margin-top: 10px;">Закрыть</button>
+        </div>
+    `;
+    UI.resultModal.querySelector('#result-sell-all').onclick = sellCallback;
+    UI.resultModal.querySelector('#result-spin-again').onclick = againCallback;
+    UI.resultModal.querySelector('#result-close').onclick = closeCallback;
+    showModal(UI.resultModal);
 }
