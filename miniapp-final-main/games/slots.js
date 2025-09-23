@@ -2,17 +2,15 @@
 
 import { STATE } from '../state.js';
 import { UI, showNotification, updateBalanceDisplay } from '../ui.js';
+import * as api from '../api.js';
 
-/**
- * Инициализирует игру "Слоты".
- */
 export function initSlots() {
     if (UI.slotsSpinBtn) {
         UI.slotsSpinBtn.addEventListener('click', handleSlotsSpin);
     }
 }
 
-function handleSlotsSpin() {
+async function handleSlotsSpin() {
     if (STATE.slotsState.isSpinning) return;
 
     const bet = parseInt(UI.slotsBetInput.value, 10);
@@ -21,65 +19,58 @@ function handleSlotsSpin() {
 
     STATE.slotsState.isSpinning = true;
     UI.slotsSpinBtn.disabled = true;
-    STATE.userBalance -= bet;
-    updateBalanceDisplay(STATE.userBalance);
     UI.slotsPayline.classList.remove('visible');
 
-    const results = [];
-    const tracks = [UI.slotsTrack1, UI.slotsTrack2, UI.slotsTrack3];
-    let reelsFinished = 0;
-
-    tracks.forEach((track, index) => {
-        const symbols = STATE.slotsState.symbols;
-        const reelLength = 30;
-        const finalSymbol = symbols[Math.floor(Math.random() * symbols.length)];
-        results[index] = finalSymbol;
-
-        // Создаем барабан с конечным символом на предпоследней позиции
-        track.innerHTML = Array.from({ length: reelLength }, (_, i) => {
-            const symbol = i === reelLength - 2 ? finalSymbol : symbols[Math.floor(Math.random() * symbols.length)];
-            return `<div class="slots-item"><img src="${symbol.imageSrc}" alt="${symbol.name}"></div>`;
-        }).join('');
-
-        // Сброс и запуск анимации
-        track.style.transition = 'none';
-        track.style.top = '0px';
-        track.offsetHeight; // Принудительный reflow
-
-        const itemHeight = 90; // Высота элемента + margin
-        const targetPosition = (reelLength - 2) * itemHeight;
+    try {
+        const gameResult = await api.playGameSlots(bet);
         
-        track.style.transition = `top ${2.5 + index * 0.3}s cubic-bezier(0.25, 1, 0.5, 1)`;
-        track.style.top = `-${targetPosition}px`;
+        const tracks = [UI.slotsTrack1, UI.slotsTrack2, UI.slotsTrack3];
+        let reelsFinished = 0;
         
-        track.addEventListener('transitionend', () => {
-            reelsFinished++;
-            if (reelsFinished === tracks.length) {
-                processSlotsResult(results, bet);
-            }
-        }, { once: true });
-    });
+        tracks.forEach((track, index) => {
+            const reelLength = 30;
+            const finalSymbol = STATE.slotsState.symbols.find(s => s.name === gameResult.reels[index]);
+            
+            track.innerHTML = Array.from({ length: reelLength }, (_, i) => {
+                const symbol = i === reelLength - 2 ? finalSymbol : STATE.slotsState.symbols[Math.floor(Math.random() * STATE.slotsState.symbols.length)];
+                return `<div class="slots-item"><img src="${symbol.imageSrc}" alt="${symbol.name}"></div>`;
+            }).join('');
+
+            track.style.transition = 'none';
+            track.style.top = '0px';
+            track.offsetHeight; // Reflow
+
+            const itemHeight = 90;
+            const targetPosition = (reelLength - 2) * itemHeight;
+            
+            track.style.transition = `top ${2.5 + index * 0.3}s cubic-bezier(0.25, 1, 0.5, 1)`;
+            track.style.top = `-${targetPosition}px`;
+            
+            track.addEventListener('transitionend', () => {
+                reelsFinished++;
+                if (reelsFinished === tracks.length) {
+                    processSlotsResult(gameResult);
+                }
+            }, { once: true });
+        });
+
+    } catch (error) {
+        console.error("Ошибка в игре Slots:", error);
+        STATE.slotsState.isSpinning = false;
+        UI.slotsSpinBtn.disabled = false;
+    }
 }
 
-function processSlotsResult(results, bet) {
-    let win = 0;
+function processSlotsResult(gameResult) {
+    STATE.userBalance = gameResult.newBalance;
+    updateBalanceDisplay(STATE.userBalance);
+    
     let message = "Попробуйте еще раз!";
-    const [r1, r2, r3] = results.map(r => r.name);
-
-    // Логика выигрышей (можно усложнить)
-    if (r1 === r2 && r2 === r3) {
-        win = bet * 5; // x5 за три в ряд
-        message = `Джекпот! Выигрыш x5!`;
-    } else if (r1 === r2 || r2 === r3) {
-        win = bet * 2; // x2 за два в ряд слева или справа
-        message = `Отлично! Выигрыш x2!`;
-    }
-
-    if (win > 0) {
-        STATE.userBalance += win;
-        updateBalanceDisplay(STATE.userBalance);
+    if (gameResult.winAmount > 0) {
         UI.slotsPayline.classList.add('visible');
-        showNotification(`${message} (+${win.toFixed(0)} ⭐)`);
+        const multiplier = gameResult.winAmount / parseInt(UI.slotsBetInput.value, 10);
+        message = `Отлично! Выигрыш x${multiplier}!`;
+        showNotification(`${message} (+${gameResult.winAmount.toFixed(0)} ⭐)`);
     } else {
         showNotification(message);
     }
