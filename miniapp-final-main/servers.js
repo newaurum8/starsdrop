@@ -6,38 +6,45 @@ const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const fetch = require('node-fetch');
 
+// Загружаем переменные окружения из .env файла
+require('dotenv').config();
+
+// --- ПРОВЕРКА КЛЮЧЕВЫХ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ---
+const requiredEnvVars = ['DATABASE_URL', 'ADMIN_SECRET', 'BOT_API_URL', 'MINI_APP_SECRET_KEY'];
+const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingEnvVars.length > 0) {
+    console.error(`ОШИБКА: Отсутствуют необходимые переменные окружения в файле .env: ${missingEnvVars.join(', ')}`);
+    console.error('Пожалуйста, убедитесь, что файл .env существует в корневой папке и содержит все нужные значения.');
+    process.exit(1); // Завершаем работу, если конфигурация неполная
+}
+
+// --- ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ ---
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Используем переменную окружения для строки подключения
-const connectionString = 'postgresql://neondb_owner:npg_xoO8NXpDn1fy@ep-hidden-sound-a23oyr8a-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
-
-if (!connectionString) {
-    console.error('Ошибка: Переменная окружения DATABASE_URL не установлена!');
-    process.exit(1);
-}
+// Используем переменные, которые мы уже проверили
+const connectionString = process.env.DATABASE_URL;
+const ADMIN_SECRET = process.env.ADMIN_SECRET;
+const BOT_API_URL = process.env.BOT_API_URL;
+const MINI_APP_SECRET_KEY = process.env.MINI_APP_SECRET_KEY;
 
 const pool = new Pool({
     connectionString: connectionString,
     ssl: {
-        rejectUnauthorized: false // Важная настройка для Render и Supabase
+        rejectUnauthorized: false
     }
 });
 
 app.use(cors());
 app.use(express.json());
 
-// --- КОНФИГУРАЦИЯ ---
-const ADMIN_SECRET = 'Aurum';
-// !!! ИСПРАВЛЕНИЕ: Установлен ваш публичный URL-адрес Python-сервера !!!
-const BOT_API_URL = 'https://server4644.server-vps.com/api/v1/balance/change'; 
-const MINI_APP_SECRET_KEY = "a4B!z$9pLw@cK#vG*sF7qE&rT2uY"; // Ваш секретный ключ
 
 // --- Хелпер для отправки запросов к API бота ---
 async function changeBalanceInBot(telegramId, delta, reason) {
     const idempotencyKey = uuidv4();
     const body = JSON.stringify({
-        user_id: telegramId, // Отправляем telegram_id
+        user_id: telegramId,
         delta: delta,
         reason: reason
     });
@@ -47,7 +54,6 @@ async function changeBalanceInBot(telegramId, delta, reason) {
         .update(body)
         .digest('hex');
 
-    // Логика повторных попыток для сетевых ошибок
     for (let attempt = 1; attempt <= 3; attempt++) {
         try {
             const response = await fetch(BOT_API_URL, {
@@ -58,19 +64,18 @@ async function changeBalanceInBot(telegramId, delta, reason) {
                     'X-Signature': signature
                 },
                 body: body,
-                timeout: 7000 // таймаут 7 секунд
+                timeout: 7000
             });
 
             const result = await response.json();
 
             if (!response.ok) {
-                 // Не повторяем попытку при ошибках клиента (4xx)
                 if (response.status >= 400 && response.status < 500) {
                      throw new Error(result.detail || `Ошибка API бота: ${response.status}`);
                 }
                  console.warn(`Попытка ${attempt} не удалась. Статус: ${response.status}. Ответ:`, result);
                  if (attempt === 3) throw new Error(`Ошибка API бота после 3 попыток: ${result.detail || response.status}`);
-                 await new Promise(res => setTimeout(res, 1000 * attempt)); // экспоненциальная задержка
+                 await new Promise(res => setTimeout(res, 1000 * attempt));
                  continue;
             }
 
@@ -255,7 +260,7 @@ app.get('/api/user/inventory', async (req, res) => {
 });
 
 app.post('/api/user/inventory/sell', async (req, res) => {
-    const { user_id, unique_id } = req.body; // user_id здесь это внутренний ID из таблицы users
+    const { user_id, unique_id } = req.body;
     if (!user_id || !unique_id) {
         return res.status(400).json({ error: 'Неверные данные для продажи' });
     }
@@ -309,7 +314,7 @@ app.get('/api/case/items_full', async (req, res) => {
 });
 
 app.post('/api/case/open', async (req, res) => {
-    const { user_id, quantity } = req.body; // user_id здесь это внутренний ID из таблицы users
+    const { user_id, quantity } = req.body;
     const casePrice = 100;
     const totalCost = casePrice * (quantity || 1);
 
@@ -328,12 +333,13 @@ app.post('/api/case/open', async (req, res) => {
         const botResponse = await changeBalanceInBot(telegram_id, -totalCost, `open_case_x${quantity}`);
 
         const caseItemsResult = await client.query('SELECT i.id, i.name, i."imageSrc", i.value FROM items i JOIN case_items ci ON i.id = ci.item_id WHERE ci.case_id = 1');
+        let caseItems;
         if (caseItemsResult.rows.length === 0) {
              const allItems = await client.query('SELECT id, name, "imageSrc", value FROM items');
              if (allItems.rows.length === 0) throw new Error('В игре нет предметов');
-             var caseItems = allItems.rows;
+             caseItems = allItems.rows;
         } else {
-            var caseItems = caseItemsResult.rows;
+            caseItems = caseItemsResult.rows;
         }
 
         const wonItems = Array.from({ length: quantity }, () => caseItems[Math.floor(Math.random() * caseItems.length)]);
