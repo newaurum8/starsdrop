@@ -1,17 +1,11 @@
-// games/upgrade.js
-
 import { STATE } from '../state.js';
 import { UI, showNotification, renderInventory } from '../ui.js';
+import * as api from '../api.js';
 
 let onUpgradeCompleteCallback = null;
 
-/**
- * Инициализирует игру "Апгрейд".
- * @param {function} onComplete - Колбэк, вызываемый после завершения апгрейда для обновления инвентаря.
- */
 export function initUpgrade(onComplete) {
     onUpgradeCompleteCallback = onComplete;
-
     if (UI.performUpgradeBtn) UI.performUpgradeBtn.addEventListener('click', handleUpgradeClick);
     
     if (UI.pickerTabs) {
@@ -34,21 +28,19 @@ export function initUpgrade(onComplete) {
     if (UI.desiredItemSlot) UI.desiredItemSlot.addEventListener('click', () => !STATE.upgradeState.isUpgrading && UI.pickerTabs[1]?.click());
 }
 
+// ... (функции resetUpgradeState, calculateUpgradeChance, renderUpgradeUI, renderItemPicker, handleItemPick остаются без изменений)
 export function resetUpgradeState(resetRotation = false) {
     if (!UI.upgradePointer) return;
-    
     Object.assign(STATE.upgradeState, {
         yourItem: null,
         desiredItem: null,
         isUpgrading: false,
     });
-
     if (resetRotation) {
         STATE.upgradeState.currentRotation = 0;
         UI.upgradePointer.style.transition = 'none';
         UI.upgradePointer.style.transform = `translateX(-50%) rotate(0deg)`;
     }
-    
     calculateUpgradeChance();
     renderUpgradeUI();
     renderItemPicker();
@@ -61,13 +53,11 @@ function calculateUpgradeChance() {
         STATE.upgradeState.multiplier = 0;
         return;
     }
-
     if (desiredItem.value <= yourItem.value) {
         STATE.upgradeState.chance = maxChance;
         STATE.upgradeState.multiplier = desiredItem.value / yourItem.value;
         return;
     }
-    
     const chance = (yourItem.value / desiredItem.value) * (maxChance / 100) * 100;
     STATE.upgradeState.chance = Math.min(chance, maxChance);
     STATE.upgradeState.multiplier = desiredItem.value / yourItem.value;
@@ -134,64 +124,58 @@ function renderItemPicker() {
 
 function handleItemPick(item) {
     if (STATE.upgradeState.isUpgrading) return;
-    
     const { activePicker } = STATE.upgradeState;
     if (activePicker === 'inventory') {
         STATE.upgradeState.yourItem = { ...item };
     } else {
         STATE.upgradeState.desiredItem = { ...item };
     }
-
     calculateUpgradeChance();
     renderUpgradeUI();
     renderItemPicker();
 }
 
+
 async function handleUpgradeClick() {
     const { yourItem, desiredItem, chance, isUpgrading } = STATE.upgradeState;
     if (!yourItem || !desiredItem || isUpgrading) return;
     
-    // Эмуляция на клиенте. В реальном проекте это должен делать бэкенд.
     STATE.upgradeState.isUpgrading = true;
     UI.performUpgradeBtn.disabled = true;
 
-    // --- Логика анимации ---
-    const isSuccess = (Math.random() * 100) < chance;
-    const chanceAngle = (chance / 100) * 360;
-    const randomOffset = Math.random() * 0.9 + 0.05; // Чтобы стрелка не останавливалась на самом краю
-    const stopPoint = isSuccess ? chanceAngle * randomOffset : chanceAngle + (360 - chanceAngle) * randomOffset;
-    const rotation = (5 * 360) + stopPoint;
-    STATE.upgradeState.currentRotation = rotation;
+    try {
+        const result = await api.performUpgrade(yourItem.uniqueId, desiredItem.id);
 
-    UI.upgradePointer.style.transition = 'transform 6s cubic-bezier(0.2, 0.8, 0.2, 1)';
-    UI.upgradePointer.style.transform = `translateX(-50%) rotate(${STATE.upgradeState.currentRotation}deg)`;
+        const chanceAngle = (chance / 100) * 360;
+        const randomOffset = Math.random() * 0.9 + 0.05;
+        const stopPoint = result.isSuccess ? chanceAngle * randomOffset : chanceAngle + (360 - chanceAngle) * randomOffset;
+        const rotation = (5 * 360) + stopPoint;
+        STATE.upgradeState.currentRotation = rotation;
 
-    // --- Логика после завершения анимации ---
-    UI.upgradePointer.addEventListener('transitionend', () => {
-        setTimeout(async () => {
-            // Удаляем старый предмет из инвентаря
-            const itemIndex = STATE.inventory.findIndex(invItem => invItem.uniqueId === yourItem.uniqueId);
-            if (itemIndex > -1) {
-                STATE.inventory.splice(itemIndex, 1);
-            }
+        UI.upgradePointer.style.transition = 'transform 6s cubic-bezier(0.2, 0.8, 0.2, 1)';
+        UI.upgradePointer.style.transform = `translateX(-50%) rotate(${STATE.upgradeState.currentRotation}deg)`;
 
-            if (isSuccess) {
-                showNotification(`Апгрейд успешный! Вы получили ${desiredItem.name}.`);
-                // Добавляем новый предмет. Генерируем временный uniqueId, бэкенд должен присвоить постоянный.
-                const newItem = { ...desiredItem, uniqueId: `temp_${Date.now()}` };
-                STATE.inventory.push(newItem);
-                STATE.gameHistory.push({ ...newItem, date: new Date(), name: `Апгрейд до ${newItem.name}`, value: newItem.value });
-            } else {
-                showNotification(`К сожалению, апгрейд не удался. Предмет потерян.`);
-                STATE.gameHistory.push({ ...yourItem, date: new Date(), name: `Неудачный апгрейд ${yourItem.name}`, value: -yourItem.value });
-            }
-            
-            resetUpgradeState(true);
+        UI.upgradePointer.addEventListener('transitionend', async () => {
+            setTimeout(async () => {
+                if (result.isSuccess) {
+                    showNotification(`Апгрейд успешный! Вы получили ${result.newItem.name}.`);
+                    STATE.gameHistory.push({ ...result.newItem, date: new Date(), name: `Апгрейд до ${result.newItem.name}`, value: result.newItem.value });
+                } else {
+                    showNotification(`К сожалению, апгрейд не удался. Предмет потерян.`);
+                    STATE.gameHistory.push({ ...yourItem, date: new Date(), name: `Неудачный апгрейд ${yourItem.name}`, value: -yourItem.value });
+                }
+                
+                resetUpgradeState(true);
 
-            // Вызываем колбэк для обновления инвентаря с сервера
-            if (onUpgradeCompleteCallback) {
-                await onUpgradeCompleteCallback();
-            }
-        }, 1500);
-    }, { once: true });
+                if (onUpgradeCompleteCallback) {
+                    await onUpgradeCompleteCallback();
+                }
+            }, 1500);
+        }, { once: true });
+
+    } catch (error) {
+        console.error("Ошибка при апгрейде:", error);
+        STATE.upgradeState.isUpgrading = false;
+        UI.performUpgradeBtn.disabled = false;
+    }
 }
