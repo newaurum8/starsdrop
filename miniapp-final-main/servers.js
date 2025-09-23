@@ -262,6 +262,48 @@ app.post('/api/user/inventory/sell', async (req, res) => {
     }
 });
 
+app.post('/api/user/inventory/sell-multiple', async (req, res) => {
+    const { user_id, unique_ids } = req.body;
+    if (!user_id || !Array.isArray(unique_ids) || unique_ids.length === 0) {
+        return res.status(400).json({ error: 'Неверные данные для массовой продажи' });
+    }
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        // Получаем стоимость всех предметов одним запросом
+        const placeholders = unique_ids.map((_, i) => `$${i + 2}`).join(',');
+        const itemsResult = await client.query(
+            `SELECT SUM(i.value) as total_value FROM user_inventory ui 
+             JOIN items i ON ui.item_id = i.id 
+             WHERE ui.user_id = $1 AND ui.id IN (${placeholders})`,
+            [user_id, ...unique_ids]
+        );
+
+        if (itemsResult.rows.length === 0 || !itemsResult.rows[0].total_value) {
+            throw new Error('Один или несколько предметов не найдены в инвентаре');
+        }
+        
+        const totalValue = parseInt(itemsResult.rows[0].total_value, 10);
+        
+        const balanceResponse = await updateUserBalanceDirectly(client, user_id, totalValue);
+        
+        // Удаляем все предметы одним запросом
+        await client.query(`DELETE FROM user_inventory WHERE id IN (${placeholders}) AND user_id = $1`, [user_id, ...unique_ids]);
+        
+        await client.query('COMMIT');
+        
+        res.json({ success: true, newBalance: balanceResponse.new_balance, soldAmount: totalValue });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error("Ошибка при массовой продаже:", err);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 app.get('/api/case/items_full', async (req, res) => {
     try {
         const sql = `
@@ -308,10 +350,17 @@ app.post('/api/case/open', async (req, res) => {
             caseItems = caseItemsResult.rows;
         }
 
-        const wonItems = Array.from({ length: quantity }, () => caseItems[Math.floor(Math.random() * caseItems.length)]);
-        
-        for (const item of wonItems) {
-            await client.query("INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2)", [user_id, item.id]);
+        const wonItems = [];
+        for (let i = 0; i < quantity; i++) {
+            const randomItem = caseItems[Math.floor(Math.random() * caseItems.length)];
+            const result = await client.query(
+                "INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2) RETURNING id",
+                [user_id, randomItem.id]
+            );
+            wonItems.push({
+                ...randomItem,
+                uniqueId: result.rows[0].id // Добавляем уникальный ID из инвентаря
+            });
         }
         
         await client.query('COMMIT');
@@ -321,8 +370,6 @@ app.post('/api/case/open', async (req, res) => {
         await client.query('ROLLBACK');
         console.error("Ошибка открытия кейса:", err);
         res.status(500).json({ error: err.message });
-    } finally {
-        client.release();
     }
 });
 
