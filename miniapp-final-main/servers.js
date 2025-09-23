@@ -15,7 +15,7 @@ const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
 
 if (missingEnvVars.length > 0) {
     console.error(`ОШИБКА: Отсутствуют необходимые переменные окружения в файле .env: ${missingEnvVars.join(', ')}`);
-    console.error('Пожалуйста, убедитесь, что файл .env существует в корневой папке и содержит все нужные значения.');
+    console.error('Пожалуйста, убедитесь, что файл .env существует в корневой папке и содержит все нужные значения, или что они установлены в настройках хостинга (Render).');
     process.exit(1); // Завершаем работу, если конфигурация неполная
 }
 
@@ -93,19 +93,31 @@ async function changeBalanceInBot(telegramId, delta, reason) {
 app.use(express.static(__dirname));
 app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
-// --- ЗАЩИТА АДМИН-ПАНЕЛИ ---
+// --- ЗАЩИТА АДМИН-ПАНЕЛИ (С ОТЛАДКОЙ) ---
 const checkAdminSecret = (req, res, next) => {
     const secret = req.query.secret || req.body.secret;
+
+    // --- ДЛЯ ОТЛАДКИ ---
+    console.log(`[DEBUG] Секрет из запроса (URL): "${secret}"`);
+    console.log(`[DEBUG] Секрет из настроек сервера (Render): "${ADMIN_SECRET}"`);
+    console.log(`[DEBUG] Результат сравнения: ${secret === ADMIN_SECRET}`);
+    // --- КОНЕЦ ОТЛАДКИ ---
+
     if (secret === ADMIN_SECRET) {
         next();
     } else {
-        res.status(403).send('Доступ запрещен');
+        res.status(403).send('Доступ запрещен: Неверный секретный ключ.');
     }
 };
 
 // --- ОСНОВНЫЕ МАРШРУТЫ ---
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
-app.get('/admin', checkAdminSecret, (req, res) => res.sendFile(path.join(__dirname, 'admin', 'index.html')));
+app.get('/admin', (req, res) => {
+    // Эта проверка нужна, чтобы сначала проверить ключ, а потом отдавать файл
+    checkAdminSecret(req, res, () => {
+        res.sendFile(path.join(__dirname, 'admin', 'index.html'));
+    });
+});
 
 // --- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ---
 async function initializeDb() {
@@ -443,6 +455,7 @@ app.post('/api/contest/buy-ticket', async (req, res) => {
 });
 
 // --- API Маршруты (админские) ---
+// Применяем middleware для всех маршрутов, начинающихся с /api/admin
 app.use('/api/admin', checkAdminSecret);
 
 app.get('/api/admin/users', async (req, res) => {
