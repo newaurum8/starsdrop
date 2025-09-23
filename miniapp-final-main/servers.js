@@ -25,7 +25,7 @@ const port = process.env.PORT || 3000;
 const connectionString = process.env.DATABASE_URL;
 const ADMIN_SECRET = process.env.ADMIN_SECRET;
 const MINI_APP_API_SECRET = process.env.MINI_APP_API_SECRET;
-const BOT_API_URL = 'http://127.0.0.1:8001/api/v1/balance/change'; // Убедитесь, что порт правильный (8001)
+const BOT_API_URL = 'http://91.239.235.200:8001/api/v1/balance/change'; // Убедитесь, что порт правильный (8001)
 
 const pool = new Pool({
     connectionString: connectionString,
@@ -674,3 +674,4 @@ app.listen(port, () => {
     console.log(`Админ-панель: http://localhost:${port}/admin?secret=${ADMIN_SECRET}`);
     initializeDb();
 });
+
