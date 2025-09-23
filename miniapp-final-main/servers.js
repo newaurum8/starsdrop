@@ -525,7 +525,6 @@ app.post('/api/games/upgrade', async (req, res) => {
     }
 });
 
-
 // --- API Маршруты (админские) ---
 // ... (админские маршруты остаются без изменений, кроме updateUserBalance)
 
