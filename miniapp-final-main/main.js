@@ -1,4 +1,4 @@
-// main.js
+
 
 import { STATE } from './state.js';
 import * as api from './api.js';
@@ -101,6 +101,27 @@ async function fetchAndRenderContest() {
 }
 
 /**
+ * Загружает или обновляет данные пользователя (баланс и т.д.) с сервера.
+ */
+async function fetchAndRefreshUserData() {
+    try {
+        const tg = window.Telegram.WebApp;
+        const user = tg.initDataUnsafe.user;
+        if (user && user.id) {
+            const userData = await api.authenticateUser(user);
+            STATE.user = userData;
+            STATE.userBalance = userData.balance_uah;
+            updateBalanceDisplay(STATE.userBalance);
+            return true;
+        }
+    } catch (error) {
+        console.error("Ошибка при обновлении данных пользователя:", error);
+    }
+    return false;
+}
+
+
+/**
  * Основная функция инициализации приложения.
  */
 async function initializeApp() {
@@ -125,6 +146,18 @@ async function initializeApp() {
         const tg = window.Telegram.WebApp;
         tg.ready();
         tg.expand();
+        
+        // Слушатель для обновления данных, когда пользователь возвращается в приложение
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                fetchAndRefreshUserData().then(success => {
+                    if (success) {
+                        showNotification("Баланс обновлен!");
+                    }
+                });
+            }
+        });
+
         const user = tg.initDataUnsafe.user;
 
         if (user && user.id) {
@@ -134,7 +167,6 @@ async function initializeApp() {
 
             const userData = await api.authenticateUser(user);
             STATE.user = userData;
-            // ИСПРАВЛЕНО: читаем balance_uah
             STATE.userBalance = userData.balance_uah;
             updateBalanceDisplay(STATE.userBalance);
 
