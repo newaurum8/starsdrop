@@ -16,7 +16,7 @@ if (missingEnvVars.length > 0) {
     process.exit(1);
 }
 
-// --- ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ ---
+// --- ИНИЦИАЛЛИЗАЦИЯ ПРИЛОЖЕНИЯ ---
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -42,7 +42,7 @@ async function updateUserBalanceDirectly(client, telegramId, delta) {
     }
 
     const currentBalance = userBalanceQuery.rows[0].balance_uah;
-    if (parseFloat(currentBalance) + delta < 0) {
+    if (parseFloat(currentBalance) + parseFloat(delta) < 0) {
         throw new Error('Недостаточно средств');
     }
 
@@ -83,12 +83,28 @@ async function initializeDb() {
     try {
         console.log('Успешное подключение к базе данных PostgreSQL');
 
+        // Используем balance_uah как в боте
         await client.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 telegram_id BIGINT UNIQUE,
                 username TEXT,
-                balance_uah NUMERIC(10, 2) NOT NULL DEFAULT 1000.00
+                balance_uah NUMERIC(10, 2) NOT NULL DEFAULT 1000.00,
+                chosen_currency VARCHAR(10),
+                chosen_game VARCHAR(50),
+                registration_date TIMESTAMPTZ DEFAULT NOW(),
+                games_played INT DEFAULT 0,
+                total_wagered NUMERIC(10, 2) DEFAULT 0.00,
+                total_purchased_uah NUMERIC(10, 2) DEFAULT 0.00,
+                total_withdrawn_gold INT DEFAULT 0,
+                withdrawals_count INT DEFAULT 0,
+                in_yellow_list BOOLEAN DEFAULT FALSE,
+                total_purchased_uc NUMERIC(10, 2) DEFAULT 0.00,
+                total_withdrawn_uc INT DEFAULT 0,
+                withdrawals_count_uc INT DEFAULT 0,
+                total_purchased_bc NUMERIC(10, 2) DEFAULT 0.00,
+                total_withdrawn_bc INT DEFAULT 0,
+                withdrawals_count_bc INT DEFAULT 0
             );
         `);
 
@@ -198,6 +214,7 @@ app.post('/api/user/get-or-create', async (req, res) => {
             res.json(userResult.rows[0]);
         } else {
             const initialBalance = 1000;
+            // Используем balance_uah
             const newUserResult = await pool.query(
                 "INSERT INTO users (telegram_id, username, balance_uah) VALUES ($1, $2, $3) RETURNING *",
                 [telegram_id, username, initialBalance]
@@ -271,7 +288,6 @@ app.post('/api/user/inventory/sell-multiple', async (req, res) => {
     try {
         await client.query('BEGIN');
         
-        // Получаем стоимость всех предметов одним запросом
         const placeholders = unique_ids.map((_, i) => `$${i + 2}`).join(',');
         const itemsResult = await client.query(
             `SELECT SUM(i.value) as total_value FROM user_inventory ui 
@@ -288,7 +304,6 @@ app.post('/api/user/inventory/sell-multiple', async (req, res) => {
         
         const balanceResponse = await updateUserBalanceDirectly(client, telegram_id, totalValue);
         
-        // Удаляем все предметы одним запросом
         await client.query(`DELETE FROM user_inventory WHERE id IN (${placeholders}) AND user_id = $1`, [user_id, ...unique_ids]);
         
         await client.query('COMMIT');
@@ -359,7 +374,7 @@ app.post('/api/case/open', async (req, res) => {
             );
             wonItems.push({
                 ...randomItem,
-                uniqueId: result.rows[0].id // Добавляем уникальный ID из инвентаря
+                uniqueId: result.rows[0].id
             });
         }
         
@@ -460,6 +475,7 @@ app.use('/api/admin', checkAdminSecret);
 
 app.get('/api/admin/users', async (req, res) => {
     try {
+        // Запрашиваем balance_uah
         const { rows } = await pool.query("SELECT id, telegram_id, username, balance_uah FROM users ORDER BY id DESC");
         res.json(rows);
     } catch (err) {
@@ -470,6 +486,7 @@ app.get('/api/admin/users', async (req, res) => {
 app.post('/api/admin/user/balance', async (req, res) => {
     const { userId, newBalance } = req.body;
     try {
+        // Обновляем balance_uah
         const result = await pool.query("UPDATE users SET balance_uah = $1 WHERE id = $2", [newBalance, userId]);
         res.json({ success: true, changes: result.rowCount });
     } catch (err) {
