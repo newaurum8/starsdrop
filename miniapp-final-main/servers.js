@@ -5,18 +5,29 @@ const path = require('path');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const fetch = require('node-fetch');
-require('dotenv').config(); // Добавлено для загрузки переменных из .env
 
+// Загружаем переменные окружения из .env файла
+require('dotenv').config();
+
+// --- ПРОВЕРКА КЛЮЧЕВЫХ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ---
+const requiredEnvVars = ['DATABASE_URL', 'ADMIN_SECRET', 'BOT_API_URL', 'MINI_APP_SECRET_KEY'];
+const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingEnvVars.length > 0) {
+    console.error(`ОШИБКА: Отсутствуют необходимые переменные окружения в файле .env: ${missingEnvVars.join(', ')}`);
+    console.error('Пожалуйста, убедитесь, что файл .env существует в корневой папке и содержит все нужные значения.');
+    process.exit(1); // Завершаем работу, если конфигурация неполная
+}
+
+// --- ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ ---
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Теперь используется переменная окружения для строки подключения
+// Используем переменные, которые мы уже проверили
 const connectionString = process.env.DATABASE_URL;
-
-if (!connectionString) {
-    console.error('Ошибка: Переменная окружения DATABASE_URL не установлена в .env файле!');
-    process.exit(1);
-}
+const ADMIN_SECRET = process.env.ADMIN_SECRET;
+const BOT_API_URL = process.env.BOT_API_URL;
+const MINI_APP_SECRET_KEY = process.env.MINI_APP_SECRET_KEY;
 
 const pool = new Pool({
     connectionString: connectionString,
@@ -28,10 +39,6 @@ const pool = new Pool({
 app.use(cors());
 app.use(express.json());
 
-// --- КОНФИГУРАЦИЯ ИЗ .env ---
-const ADMIN_SECRET = process.env.ADMIN_SECRET;
-const BOT_API_URL = process.env.BOT_API_URL;
-const MINI_APP_SECRET_KEY = process.env.MINI_APP_SECRET_KEY;
 
 // --- Хелпер для отправки запросов к API бота ---
 async function changeBalanceInBot(telegramId, delta, reason) {
