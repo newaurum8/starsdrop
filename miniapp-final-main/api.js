@@ -46,6 +46,12 @@ export async function sellFromInventory(uniqueId) {
     });
 }
 
+export async function sellMultipleItemsFromInventory(uniqueIds) {
+    return callApi('/api/user/inventory/sell-multiple', 'POST', {
+        unique_ids: uniqueIds
+    });
+}
+
 export async function openCase(quantity) {
     return callApi('/api/case/open', 'POST', {
         quantity: quantity
