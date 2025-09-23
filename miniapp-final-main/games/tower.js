@@ -2,6 +2,7 @@
 
 import { STATE } from '../state.js';
 import { UI, showNotification, updateBalanceDisplay } from '../ui.js';
+import * as api from '../api.js';
 
 /**
  * Инициализирует игру "Башня".
@@ -16,15 +17,12 @@ export function initTower() {
  */
 export function resetTowerGame() {
     if (!UI.towerGameBoard) return;
-    if (STATE.towerState.nextLevelTimeout) {
-        clearTimeout(STATE.towerState.nextLevelTimeout);
-    }
 
     Object.assign(STATE.towerState, {
         isActive: false,
-        isCashingOut: false,
+        sessionId: null,
         currentLevel: 0,
-        nextLevelTimeout: null
+        payouts: []
     });
 
     UI.towerGameBoard.innerHTML = '';
@@ -34,37 +32,46 @@ export function resetTowerGame() {
     UI.towerMaxWinDisplay.textContent = 'Можливий виграш: 0 ⭐';
 }
 
-function startTowerGame() {
+async function startTowerGame() {
     const bet = parseInt(UI.towerBetInput.value, 10);
-    if (isNaN(bet) || bet < 15) return showNotification("Минимальная ставка 15 ⭐");
+    const minBet = 15;
+    if (isNaN(bet) || bet < minBet) return showNotification(`Минимальная ставка ${minBet} ⭐`);
     if (STATE.userBalance < bet) return showNotification("Недостаточно средств");
 
-    STATE.userBalance -= bet;
-    updateBalanceDisplay(STATE.userBalance);
-    
-    Object.assign(STATE.towerState, {
-        isActive: true,
-        bet: bet,
-        currentLevel: 0,
-        grid: Array.from({ length: STATE.towerState.levels }, () => Math.floor(Math.random() * 2)),
-        payouts: STATE.towerState.multipliers.map(m => Math.round(bet * m))
-    });
+    UI.towerStartBtn.disabled = true;
 
-    UI.towerInitialControls.classList.add('hidden');
-    UI.towerCashoutControls.classList.remove('hidden');
-    UI.towerCashoutBtn.disabled = true;
-    UI.towerCashoutBtn.textContent = `Забрать 0 ⭐`;
+    try {
+        const result = await api.startTowerGame(bet);
+        STATE.userBalance = result.newBalance;
+        updateBalanceDisplay(STATE.userBalance);
 
-    const maxWin = STATE.towerState.payouts[STATE.towerState.payouts.length - 1];
-    UI.towerMaxWinDisplay.textContent = `Можливий виграш: ${maxWin.toLocaleString('ru-RU')} ⭐`;
+        Object.assign(STATE.towerState, {
+            isActive: true,
+            sessionId: result.sessionId,
+            payouts: result.payouts,
+            currentLevel: 0
+        });
 
-    renderTower();
+        UI.towerInitialControls.classList.add('hidden');
+        UI.towerCashoutControls.classList.remove('hidden');
+        UI.towerCashoutBtn.disabled = true;
+        UI.towerCashoutBtn.textContent = `Забрать 0 ⭐`;
+
+        const maxWin = result.payouts[result.payouts.length - 1];
+        UI.towerMaxWinDisplay.textContent = `Можливий виграш: ${maxWin.toLocaleString('ru-RU')} ⭐`;
+
+        renderTower();
+    } catch (error) {
+        console.error("Ошибка при старте игры 'Башня':", error);
+    } finally {
+        UI.towerStartBtn.disabled = false;
+    }
 }
 
 function renderTower() {
     if (!UI.towerGameBoard) return;
     UI.towerGameBoard.innerHTML = '';
-    const { isActive, currentLevel, levels, payouts, grid } = STATE.towerState;
+    const { isActive, currentLevel, levels, payouts } = STATE.towerState;
 
     for (let i = 0; i < levels; i++) {
         const rowEl = document.createElement('div');
@@ -76,20 +83,8 @@ function renderTower() {
             cell.className = 'tower-cell';
             cell.dataset.col = j;
             cell.innerHTML = `+${payout.toLocaleString('ru-RU')}`;
-
             if (isActive && i === currentLevel) {
                 cell.addEventListener('click', () => handleTowerCellClick(i, j), { once: true });
-            }
-
-            // Показываем прошлые удачные ходы
-            if (i < currentLevel) {
-                const bombCol = grid[i];
-                if (j !== bombCol) {
-                    cell.classList.add('safe');
-                    cell.innerHTML = `<img src="images/diamond.png" alt="Win">`;
-                } else {
-                    cell.style.opacity = "0.5"; // Скрываем бомбу на пройденных уровнях
-                }
             }
             rowEl.appendChild(cell);
         }
@@ -97,76 +92,87 @@ function renderTower() {
     }
 }
 
-function handleTowerCellClick(row, col) {
-    if (!STATE.towerState.isActive || STATE.towerState.isCashingOut || row !== STATE.towerState.currentLevel) return;
+async function handleTowerCellClick(row, col) {
+    if (!STATE.towerState.isActive || row !== STATE.towerState.currentLevel) return;
     
-    STATE.towerState.isActive = false; // Блокируем дальнейшие клики на время анимации
-    const bombCol = STATE.towerState.grid[row];
-    const cells = UI.towerGameBoard.children[row].querySelectorAll('.tower-cell');
+    STATE.towerState.isActive = false; // Блокируем дальнейшие клики на время запроса
 
-    cells.forEach((cell, cellIndex) => {
-        cell.classList.add(cellIndex === bombCol ? 'danger' : 'safe');
-        cell.innerHTML = `<img src="images/${cellIndex === bombCol ? 'bomb' : 'diamond'}.png" alt="">`;
-    });
-    
-    UI.towerGameBoard.children[row].classList.remove('active');
+    try {
+        const result = await api.selectTowerCell(STATE.towerState.sessionId, col);
+        
+        const cells = UI.towerGameBoard.children[row].querySelectorAll('.tower-cell');
+        cells.forEach((cell, cellIndex) => {
+            cell.classList.add(cellIndex === result.bombCol ? 'danger' : 'safe');
+            cell.innerHTML = `<img src="images/${cellIndex === result.bombCol ? 'bomb' : 'diamond'}.png" alt="">`;
+        });
+        UI.towerGameBoard.children[row].classList.remove('active');
 
-    if (col === bombCol) {
-        UI.towerCashoutBtn.disabled = true;
-        setTimeout(() => endTowerGame(false), 1200);
-    } else {
-        STATE.towerState.currentLevel++;
-        const cashoutAmount = STATE.towerState.payouts[STATE.towerState.currentLevel - 1];
-        UI.towerCashoutBtn.textContent = `Забрать ${cashoutAmount.toLocaleString('ru-RU')} ⭐`;
-        UI.towerCashoutBtn.disabled = false;
-
-        if (STATE.towerState.currentLevel === STATE.towerState.levels) {
-            setTimeout(() => endTowerGame(true), 1200); // Победа на последнем уровне
+        if (result.isBomb) {
+            UI.towerCashoutBtn.disabled = true;
+            showNotification("Вы проиграли! Ставка сгорела.");
+            setTimeout(resetTowerGame, 2500);
         } else {
-            STATE.towerState.nextLevelTimeout = setTimeout(() => {
-                STATE.towerState.isActive = true;
-                renderTower(); // Перерисовываем для активации следующего ряда
-            }, 800);
-        }
-    }
-}
+            STATE.towerState.currentLevel++;
+            UI.towerCashoutBtn.textContent = `Забрать ${result.cashoutAmount.toLocaleString('ru-RU')} ⭐`;
+            UI.towerCashoutBtn.disabled = false;
 
-function endTowerGame(isWin) {
-    if (STATE.towerState.nextLevelTimeout) clearTimeout(STATE.towerState.nextLevelTimeout);
-    
-    STATE.towerState.isActive = false;
-    UI.towerCashoutBtn.disabled = true;
-
-    if (isWin && STATE.towerState.currentLevel > 0) {
-        const winAmount = STATE.towerState.payouts[STATE.towerState.currentLevel - 1];
-        STATE.userBalance += winAmount;
-        updateBalanceDisplay(STATE.userBalance);
-        showNotification(`Выигрыш ${winAmount.toLocaleString('ru-RU')} ⭐ зачислен!`);
-    } else {
-        showNotification("Вы проиграли! Ставка сгорела.");
-        // Показываем оставшиеся бомбы
-        for (let i = STATE.towerState.currentLevel; i < STATE.towerState.levels; i++) {
-            const rowEl = UI.towerGameBoard.children[i];
-            if (rowEl) {
-                const bombCell = rowEl.querySelector(`.tower-cell[data-col="${STATE.towerState.grid[i]}"]`);
-                if (bombCell && !bombCell.classList.contains('safe') && !bombCell.classList.contains('danger')) {
-                     bombCell.classList.add('danger');
-                     bombCell.innerHTML = `<img src="images/bomb.png" alt="Lose">`;
-                }
+            if (result.isWin) {
+                STATE.userBalance = result.newBalance;
+                updateBalanceDisplay(STATE.userBalance);
+                showNotification(`Выигрыш ${result.winAmount.toLocaleString('ru-RU')} ⭐ зачислен!`);
+                setTimeout(resetTowerGame, 2500);
+            } else {
+                setTimeout(() => {
+                    STATE.towerState.isActive = true;
+                    // Перерисовываем, чтобы показать прошлый ход и активировать следующий ряд
+                    renderTowerWithHistory(); 
+                }, 800);
             }
         }
+    } catch (error) {
+        console.error("Ошибка при выборе ячейки в Башне:", error);
+        STATE.towerState.isActive = true; // Разблокируем в случае ошибки
     }
-    
-    setTimeout(resetTowerGame, 2500);
 }
 
-function cashoutTower() {
-    if (STATE.towerState.currentLevel === 0 || STATE.towerState.isCashingOut || STATE.towerState.isActive) return;
-    if (STATE.towerState.nextLevelTimeout) clearTimeout(STATE.towerState.nextLevelTimeout);
+function renderTowerWithHistory() {
+    if (!UI.towerGameBoard) return;
+    const { currentLevel, levels, payouts } = STATE.towerState;
+    
+    // Деактивируем все ряды
+    for (let i = 0; i < levels; i++) {
+        UI.towerGameBoard.children[i].classList.remove('active');
+    }
+    
+    // Активируем текущий ряд
+    if (UI.towerGameBoard.children[currentLevel]) {
+        UI.towerGameBoard.children[currentLevel].classList.add('active');
+        // Заново навешиваем обработчики на новый активный ряд
+        const cells = UI.towerGameBoard.children[currentLevel].querySelectorAll('.tower-cell');
+        cells.forEach((cell, colIndex) => {
+             cell.addEventListener('click', () => handleTowerCellClick(currentLevel, colIndex), { once: true });
+        });
+    }
+}
 
+
+async function cashoutTower() {
+    if (STATE.towerState.isCashingOut || !STATE.towerState.sessionId) return;
+    
     STATE.towerState.isCashingOut = true;
     STATE.towerState.isActive = false;
     UI.towerCashoutBtn.disabled = true;
-    
-    endTowerGame(true);
+
+    try {
+        const result = await api.cashoutTower(STATE.towerState.sessionId);
+        STATE.userBalance = result.newBalance;
+        updateBalanceDisplay(STATE.userBalance);
+        showNotification(`Выигрыш ${result.winAmount.toLocaleString('ru-RU')} ⭐ зачислен!`);
+        setTimeout(resetTowerGame, 2500);
+    } catch(error) {
+        console.error("Ошибка при кэшауте в Башне:", error);
+        STATE.towerState.isCashingOut = false;
+        STATE.towerState.isActive = true;
+        UI.towerCashoutBtn.disabled = false;
+    }
 }
