@@ -103,6 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.classList.contains('save-balance-btn')) {
             const userId = e.target.dataset.userid;
             const balanceInput = e.target.closest('tr').querySelector('.balance-input');
+            // ИСПРАВЛЕНО: используем parseFloat для чисел с плавающей точкой
             const newBalance = parseFloat(balanceInput.value);
             if (!isNaN(newBalance) && newBalance >= 0) {
                 updateUserBalance(userId, newBalance);
