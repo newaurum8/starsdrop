@@ -191,7 +191,7 @@ function setupEventListeners() {
         try {
             const tg = window.Telegram.WebApp;
             const user = tg.initDataUnsafe.user;
-            const app_url = `https://t.me/YOUR_BOT_USERNAME_HERE/YOUR_APP_NAME?startapp=${user.id}`;
+            const app_url = `https://t.me/qqtest134_bot/starsdop?startapp=${user.id}`;
             const text = `Привет! Присоединяйся к StarsDrop и получай крутые подарки!`;
             tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(app_url)}&text=${encodeURIComponent(text)}`);
         } catch(e) {
@@ -203,7 +203,7 @@ function setupEventListeners() {
          try {
             const tg = window.Telegram.WebApp;
             const user = tg.initDataUnsafe.user;
-            const app_url = `https://t.me/YOUR_BOT_USERNAME_HERE/YOUR_APP_NAME?startapp=${user.id}`;
+            const app_url = `https://t.me/qqtest134_bot/starsdop?startapp=${user.id}`;
             navigator.clipboard.writeText(app_url).then(() => {
                 showNotification('Ссылка скопирована!');
             });
