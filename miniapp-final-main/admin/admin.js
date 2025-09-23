@@ -71,42 +71,54 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         users.forEach(user => {
             const row = document.createElement('tr');
+            row.dataset.currentBalance = user.balance_uah;
             row.innerHTML = `
                 <td>${user.id}</td>
                 <td>${user.telegram_id || 'N/A'}</td>
                 <td>${user.username || 'N/A'}</td>
-                <td><input type="number" class="balance-input" value="${user.balance_uah}"></td>
-                <td><button class="button-primary save-balance-btn" data-userid="${user.id}">Сохранить</button></td>
+                <td><input type="number" class="balance-input" value="${parseFloat(user.balance_uah).toFixed(2)}"></td>
+                <td><button class="button-primary save-balance-btn" data-telegramid="${user.telegram_id}">Сохранить</button></td>
             `;
             usersTableBody.appendChild(row);
         });
     }
-     async function updateUserBalance(userId, newBalance) {
+
+    async function updateUserBalance(telegramId, newBalance, currentBalance, buttonElement) {
         try {
             const response = await fetch(`${API_BASE_URL}/api/admin/user/balance?secret=${ADMIN_SECRET_KEY}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId, newBalance })
+                body: JSON.stringify({ 
+                    telegramId: telegramId, 
+                    newBalance: newBalance,
+                    currentBalance: currentBalance 
+                })
             });
             const result = await response.json();
             if (result.success) {
-                alert(`Баланс пользователя ${userId} успешно обновлен.`);
+                alert(`Баланс пользователя ${telegramId} успешно обновлен.`);
+                const row = buttonElement.closest('tr');
+                row.dataset.currentBalance = result.new_balance;
+                row.querySelector('.balance-input').value = parseFloat(result.new_balance).toFixed(2);
             } else {
-                throw new Error('Сервер вернул ошибку при обновлении баланса.');
+                throw new Error(result.error || 'Сервер вернул ошибку при обновлении баланса.');
             }
         } catch (error) {
             console.error('Ошибка:', error);
             alert('Не удалось обновить баланс.');
         }
     }
+
     usersTableBody.addEventListener('click', (e) => {
         if (e.target.classList.contains('save-balance-btn')) {
-            const userId = e.target.dataset.userid;
-            const balanceInput = e.target.closest('tr').querySelector('.balance-input');
-            // ИСПРАВЛЕНО: используем parseFloat для чисел с плавающей точкой
+            const telegramId = e.target.dataset.telegramid;
+            const row = e.target.closest('tr');
+            const balanceInput = row.querySelector('.balance-input');
+            const currentBalance = row.dataset.currentBalance;
             const newBalance = parseFloat(balanceInput.value);
+
             if (!isNaN(newBalance) && newBalance >= 0) {
-                updateUserBalance(userId, newBalance);
+                updateUserBalance(telegramId, newBalance, currentBalance, e.target);
             } else {
                 alert("Пожалуйста, введите корректное числовое значение для баланса.");
             }
