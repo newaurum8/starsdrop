@@ -294,15 +294,35 @@ async function startSpinProcess() {
         UI.caseView.classList.add('hidden');
         UI.spinView.classList.remove('hidden');
 
+        // Показываем/скрываем нужный контейнер для анимации
+        if (STATE.openQuantity > 1) {
+             UI.multiSpinnerContainer.classList.remove('hidden');
+             UI.spinnerContainer.classList.add('hidden');
+        } else {
+             UI.multiSpinnerContainer.classList.add('hidden');
+             UI.spinnerContainer.classList.remove('hidden');
+        }
+
         const onAnimationEnd = () => {
             showResultModal(
                 STATE.lastWonItems,
                 // Колбэк для кнопки "Продать все"
                 async () => {
-                    // Эта логика требует доработки на бэкенде для массовой продажи.
-                    // Пока просто закрываем окно.
-                    showNotification('Функция массовой продажи в разработке.');
-                    finalizeSpin();
+                    const itemIdsToSell = STATE.lastWonItems.map(item => item.uniqueId).filter(id => id);
+                    if (itemIdsToSell.length === 0) {
+                        showNotification('Нет предметов для продажи.');
+                        return;
+                    }
+                    try {
+                        const result = await api.sellMultipleItemsFromInventory(itemIdsToSell);
+                        STATE.userBalance = result.newBalance;
+                        updateBalanceDisplay(STATE.userBalance);
+                        showNotification(`Продано на ${result.soldAmount} ⭐`);
+                        finalizeSpin();
+                    } catch (error) {
+                        console.error('Ошибка при массовой продаже:', error);
+                        showNotification('Не удалось продать предметы.');
+                    }
                 },
                 // Колбэк для кнопки "Крутить еще"
                 () => {
