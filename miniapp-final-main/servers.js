@@ -16,7 +16,7 @@ if (missingEnvVars.length > 0) {
     process.exit(1);
 }
 
-// --- ИНИЦИАЛЛИЗАЦИЯ ПРИЛОЖЕНИЯ ---
+// --- ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ ---
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -89,7 +89,7 @@ async function initializeDb() {
                 id SERIAL PRIMARY KEY,
                 telegram_id BIGINT UNIQUE,
                 username TEXT,
-                balance_uah NUMERIC(10, 2) NOT NULL DEFAULT 1000.00,
+                balance_uah NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
                 chosen_currency VARCHAR(10),
                 chosen_game VARCHAR(50),
                 registration_date TIMESTAMPTZ DEFAULT NOW(),
@@ -213,8 +213,8 @@ app.post('/api/user/get-or-create', async (req, res) => {
         if (userResult.rows.length > 0) {
             res.json(userResult.rows[0]);
         } else {
-            const initialBalance = 1000;
-            // Используем balance_uah
+            // ИСПРАВЛЕНО: Начальный баланс теперь 0.00
+            const initialBalance = 0.00;
             const newUserResult = await pool.query(
                 "INSERT INTO users (telegram_id, username, balance_uah) VALUES ($1, $2, $3) RETURNING *",
                 [telegram_id, username, initialBalance]
@@ -475,7 +475,6 @@ app.use('/api/admin', checkAdminSecret);
 
 app.get('/api/admin/users', async (req, res) => {
     try {
-        // Запрашиваем balance_uah
         const { rows } = await pool.query("SELECT id, telegram_id, username, balance_uah FROM users ORDER BY id DESC");
         res.json(rows);
     } catch (err) {
@@ -486,7 +485,6 @@ app.get('/api/admin/users', async (req, res) => {
 app.post('/api/admin/user/balance', async (req, res) => {
     const { userId, newBalance } = req.body;
     try {
-        // Обновляем balance_uah
         const result = await pool.query("UPDATE users SET balance_uah = $1 WHERE id = $2", [newBalance, userId]);
         res.json({ success: true, changes: result.rowCount });
     } catch (err) {
