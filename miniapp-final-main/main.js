@@ -20,6 +20,7 @@ import {
     showResultModal
 } from './ui.js';
 
+// Импорт всех игровых модулей
 import { initCoinflip } from './games/coinflip.js';
 import { initMiner, resetMinerGame } from './games/miner.js';
 import { initRps } from './games/rps.js';
@@ -27,10 +28,17 @@ import { initSlots } from './games/slots.js';
 import { initTower, resetTowerGame } from './games/tower.js';
 import { initUpgrade, resetUpgradeState } from './games/upgrade.js';
 
+
+// --- ГЛОБАЛЬНЫЕ ФУНКЦИИ ПРИЛОЖЕНИЯ ---
+
+/**
+ * Обрабатывает логику, которая должна выполняться при переключении на определенный экран.
+ * @param {string} viewId - ID экрана, на который переключились.
+ */
 function handleViewSwitch(viewId) {
     switch (viewId) {
         case 'profile-view':
-            renderInventory(STATE.inventory, handleSellItem);
+            fetchAndRenderInventory();
             renderHistory(STATE.gameHistory);
             break;
         case 'contests-view':
@@ -48,6 +56,9 @@ function handleViewSwitch(viewId) {
     }
 }
 
+/**
+ * Загружает и отображает инвентарь пользователя.
+ */
 async function fetchAndRenderInventory() {
     try {
         STATE.inventory = await api.loadInventory();
@@ -58,34 +69,26 @@ async function fetchAndRenderInventory() {
     }
 }
 
+/**
+ * Обрабатывает продажу предмета из инвентаря.
+ * @param {string} uniqueId - Уникальный ID предмета в инвентаре.
+ */
 async function handleSellItem(uniqueId) {
-    const itemToSell = STATE.inventory.find(item => item.uniqueId === uniqueId);
-    if (!itemToSell) return;
-
-    const originalBalance = STATE.userBalance;
-    const originalInventory = [...STATE.inventory];
-
-    STATE.userBalance += itemToSell.value;
-    STATE.inventory = STATE.inventory.filter(item => item.uniqueId !== uniqueId);
-    updateBalanceDisplay(STATE.userBalance);
-    renderInventory(STATE.inventory, handleSellItem);
-    showNotification('Продажа...');
-
     try {
         const result = await api.sellFromInventory(uniqueId);
         STATE.userBalance = result.newBalance;
         updateBalanceDisplay(STATE.userBalance);
         showNotification('Предмет успешно продан!');
+        await fetchAndRenderInventory(); // Обновляем инвентарь после продажи
     } catch (error) {
         console.error("Ошибка при продаже предмета:", error);
-        showNotification('Ошибка продажи. Попробуйте снова.');
-        STATE.userBalance = originalBalance;
-        STATE.inventory = originalInventory;
-        updateBalanceDisplay(STATE.userBalance);
-        renderInventory(STATE.inventory, handleSellItem);
     }
 }
 
+
+/**
+ * Загружает и отображает данные о текущем конкурсе.
+ */
 async function fetchAndRenderContest() {
     try {
         STATE.contest = await api.loadContestData();
@@ -95,6 +98,9 @@ async function fetchAndRenderContest() {
     }
 }
 
+/**
+ * Загружает или обновляет данные пользователя (баланс и т.д.) с сервера.
+ */
 async function fetchAndRefreshUserData() {
     try {
         const tg = window.Telegram.WebApp;
@@ -112,10 +118,15 @@ async function fetchAndRefreshUserData() {
     return false;
 }
 
+
+/**
+ * Основная функция инициализации приложения.
+ */
 async function initializeApp() {
     cacheDOMElements();
     setupEventListeners();
 
+    // 1. Загрузка базовых данных (предметы, настройки игр)
     try {
         const { possibleItems, gameSettings } = await api.loadInitialData();
         STATE.possibleItems = possibleItems;
@@ -125,14 +136,16 @@ async function initializeApp() {
     } catch (error) {
         showNotification("Критическая ошибка: не удалось загрузить данные игр.");
         console.error(error);
-        return;
+        return; // Прерываем инициализацию, если базовые данные не загружены
     }
 
+    // 2. Инициализация Telegram Web App и аутентификация пользователя
     try {
         const tg = window.Telegram.WebApp;
         tg.ready();
         tg.expand();
         
+        // Слушатель для обновления данных, когда пользователь возвращается в приложение
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
                 fetchAndRefreshUserData().then(success => {
@@ -158,6 +171,7 @@ async function initializeApp() {
             fetchAndRenderInventory();
             fetchAndRenderContest();
         } else {
+             // Гостевой режим для отладки в браузере
             UI.profileName.textContent = "Guest";
             UI.profileId.textContent = "ID 0";
             STATE.userBalance = 1000;
@@ -167,15 +181,20 @@ async function initializeApp() {
         console.warn("Не удалось инициализировать Telegram Web App. Работа в гостевом режиме.");
         UI.profileName.textContent = "Guest";
         UI.profileId.textContent = "ID 0";
-        STATE.userBalance = 1000;
+        STATE.userBalance = 1000; // Демо-баланс
         updateBalanceDisplay(STATE.userBalance);
     }
 
+    // 3. Установка начального экрана и запуск таймера
     switchView('game-view', handleViewSwitch);
     setInterval(() => updateTimer(STATE.contest), 1000);
 }
 
+/**
+ * Настраивает все обработчики событий в приложении.
+ */
 function setupEventListeners() {
+    // --- Навигация ---
     UI.navButtons.forEach(btn => {
         btn.addEventListener('click', () => switchView(btn.dataset.view, handleViewSwitch));
     });
@@ -183,10 +202,12 @@ function setupEventListeners() {
         btn.addEventListener('click', () => switchView(btn.dataset.view, handleViewSwitch));
     });
 
+    // --- Модальные окна ---
     UI.modalOverlay.addEventListener('click', () => {
         document.querySelectorAll('.modal.visible').forEach(modal => hideModal(modal));
     });
 
+    // --- Профиль ---
     UI.profileTabs.forEach(tab => {
         tab.addEventListener('click', function () {
             UI.profileTabs.forEach(t => t.classList.remove('active'));
@@ -196,6 +217,7 @@ function setupEventListeners() {
         });
     });
 
+    // --- Друзья ---
     UI.inviteFriendBtn.addEventListener('click', () => {
         try {
             const tg = window.Telegram.WebApp;
@@ -222,6 +244,7 @@ function setupEventListeners() {
         }
     });
 
+    // --- Кейсы ---
     UI.caseImageBtn.addEventListener('click', () => {
         updatePriceMessage();
         showModal(UI.preOpenModal);
@@ -240,6 +263,7 @@ function setupEventListeners() {
     });
     document.querySelector('[data-close-modal="pre-open-modal"]')?.addEventListener('click', () => hideModal(UI.preOpenModal));
 
+    // --- Конкурсы ---
     UI.buyTicketBtn.addEventListener('click', async () => {
         if (!STATE.contest || !STATE.user) return showNotification('Ошибка: данные не загружены.');
         const totalCost = STATE.contest.ticket_price * STATE.ticketQuantity;
@@ -264,14 +288,20 @@ function setupEventListeners() {
         updateContestUI();
     });
 
+
+    // --- Инициализация всех игровых модулей ---
     initCoinflip();
     initMiner();
     initRps();
     initSlots();
     initTower();
-    initUpgrade(fetchAndRenderInventory);
+    initUpgrade(fetchAndRenderInventory); // Передаем колбэк для обновления инвентаря
 }
 
+
+/**
+ * Запускает процесс открытия кейса.
+ */
 async function startSpinProcess() {
     if (STATE.isSpinning || !STATE.user) return;
 
@@ -295,6 +325,7 @@ async function startSpinProcess() {
         UI.caseView.classList.add('hidden');
         UI.spinView.classList.remove('hidden');
 
+        // Показываем/скрываем нужный контейнер для анимации
         if (STATE.openQuantity > 1) {
              UI.multiSpinnerContainer.classList.remove('hidden');
              UI.spinnerContainer.classList.add('hidden');
@@ -306,6 +337,7 @@ async function startSpinProcess() {
         const onAnimationEnd = () => {
             showResultModal(
                 STATE.lastWonItems,
+                // Колбэк для кнопки "Продать все"
                 async () => {
                     const itemIdsToSell = STATE.lastWonItems.map(item => item.uniqueId).filter(id => id);
                     if (itemIdsToSell.length === 0) {
@@ -323,6 +355,7 @@ async function startSpinProcess() {
                         showNotification('Не удалось продать предметы.');
                     }
                 },
+                // Колбэк для кнопки "Крутить еще"
                 () => {
                     finalizeSpin();
                     setTimeout(() => {
@@ -330,6 +363,7 @@ async function startSpinProcess() {
                         showModal(UI.preOpenModal);
                     }, 100);
                 },
+                // Колбэк для закрытия окна
                 finalizeSpin
             );
         };
@@ -346,6 +380,9 @@ async function startSpinProcess() {
     }
 }
 
+/**
+ * Завершает цикл спина и возвращает на главный экран кейсов.
+ */
 function finalizeSpin() {
     hideModal(UI.resultModal);
     UI.spinView.classList.add('hidden');
@@ -354,4 +391,6 @@ function finalizeSpin() {
     fetchAndRenderInventory();
 }
 
+
+// --- ТОЧКА ВХОДА В ПРИЛОЖЕНИЕ ---
 document.addEventListener('DOMContentLoaded', initializeApp);
