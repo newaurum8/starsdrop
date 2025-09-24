@@ -42,30 +42,53 @@ pool.on('error', (err, client) => {
 app.use(cors());
 app.use(express.json());
 
-
-// --- ХЕЛПЕР ДЛЯ ИЗМЕНЕНИЯ БАЛАНСА ЧЕРЕЗ API БОТА ---
-async function changeBalanceViaBotAPI(telegram_id, delta, reason) {
-    const body = JSON.stringify({
-        user_id: telegram_id,
-        delta: delta,
-        reason: reason
-    });
-    const signature = crypto.createHmac('sha256', MINI_APP_API_SECRET).update(body).digest('hex');
-    const response = await fetch(BOT_API_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-Signature': signature,
-            'X-Idempotency-Key': uuidv4()
-        },
-        body: body
-    });
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || `Ошибка API бота: ${response.statusText}`);
+// --- НОВАЯ ФУНКЦИЯ ДЛЯ ФОНОВОЙ СИНХРОНИЗАЦИИ БАЛАНСА ---
+async function syncBalanceWithBotAPI(telegram_id, delta, reason) {
+    try {
+        const body = JSON.stringify({
+            user_id: telegram_id,
+            delta: delta,
+            reason: reason
+        });
+        const signature = crypto.createHmac('sha256', MINI_APP_API_SECRET).update(body).digest('hex');
+        const response = await fetch(BOT_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Signature': signature,
+                'X-Idempotency-Key': uuidv4()
+            },
+            body: body
+        });
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || `Ошибка API бота: ${response.statusText}`);
+        }
+        console.log(`[Balance Sync SUCCESS] User: ${telegram_id}, Delta: ${delta}, Reason: ${reason}`);
+    } catch (error) {
+        // Важно: логируем ошибки, чтобы можно было исправить рассинхронизацию
+        console.error(`[Balance Sync FAILED] User: ${telegram_id}, Delta: ${delta}, Reason: ${reason}. Error: ${error.message}`);
+        // В более сложных системах здесь можно добавить запись в очередь для повторной попытки
     }
-    return await response.json();
 }
+
+// --- ХЕЛПЕР ДЛЯ ЛОКАЛЬНОГО ИЗМЕНЕНИЯ БАЛАНСА ---
+async function changeUserBalance(client, telegram_id, delta, reason) {
+     const balanceResult = await client.query(
+        'UPDATE users SET balance_uah = balance_uah + $1 WHERE telegram_id = $2 RETURNING balance_uah',
+        [delta, telegram_id]
+    );
+
+    if (balanceResult.rows.length === 0) {
+        throw new Error('Пользователь не найден для обновления баланса');
+    }
+
+    // Запускаем фоновую синхронизацию, не дожидаясь ее завершения
+    syncBalanceWithBotAPI(telegram_id, delta, reason);
+
+    return { new_balance: balanceResult.rows[0].balance_uah };
+}
+
 
 // --- ОТДАЧА СТАТИЧЕСКИХ ФАЙЛОВ ---
 app.use(express.static(__dirname));
@@ -95,7 +118,6 @@ async function initializeDb() {
     try {
         console.log('Успешное подключение к базе данных PostgreSQL');
         
-        // ДОБАВЛЕНА ТАБЛИЦА ДЛЯ ИГРОВЫХ СЕССИЙ
         await client.query(`
             CREATE TABLE IF NOT EXISTS game_sessions (
                 id UUID PRIMARY KEY,
@@ -115,7 +137,6 @@ async function initializeDb() {
 }
 
 // --- API Маршруты (клиентские) ---
-// ... (Маршруты get-or-create, inventory, sell, case, contest - без изменений)
 app.post('/api/user/get-or-create', async (req, res) => {
     const { telegram_id, username } = req.body;
     if (!telegram_id) return res.status(400).json({ error: "telegram_id является обязательным" });
@@ -142,86 +163,134 @@ app.get('/api/user/inventory', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
     finally { client.release(); }
 });
+
+
+// --- ПРИМЕР ПЕРЕРАБОТАННОГО МАРШРУТА ---
 app.post('/api/user/inventory/sell', async (req, res) => {
     const { user_id, unique_id, telegram_id } = req.body;
     if (!user_id || !unique_id || !telegram_id) return res.status(400).json({ error: 'Неверные данные для продажи' });
+    
     const client = await pool.connect();
     try {
+        await client.query('BEGIN');
+
         const itemResult = await client.query('SELECT i.value FROM user_inventory ui JOIN items i ON ui.item_id = i.id WHERE ui.id = $1 AND ui.user_id = $2', [unique_id, user_id]);
         if (itemResult.rows.length === 0) throw new Error('Предмет не найден в инвентаре');
+        
         const itemValue = itemResult.rows[0].value;
-        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, itemValue, `sell_item_${unique_id}`);
         await client.query("DELETE FROM user_inventory WHERE id = $1 AND user_id = $2", [unique_id, user_id]);
+        
+        // Локально обновляем баланс и запускаем фоновую синхронизацию
+        const balanceResponse = await changeUserBalance(client, telegram_id, itemValue, `sell_item_${unique_id}`);
+
+        await client.query('COMMIT');
+        
+        // Моментально отвечаем клиенту
         res.json({ success: true, newBalance: balanceResponse.new_balance });
+
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error("Ошибка при продаже предмета:", err);
         res.status(500).json({ error: err.message });
-    } finally { client.release(); }
+    } finally {
+        client.release();
+    }
 });
+
+
 app.post('/api/user/inventory/sell-multiple', async (req, res) => {
     const { user_id, unique_ids, telegram_id } = req.body;
     if (!user_id || !Array.isArray(unique_ids) || unique_ids.length === 0 || !telegram_id) return res.status(400).json({ error: 'Неверные данные' });
+    
     const client = await pool.connect();
     try {
+        await client.query('BEGIN');
+
         const placeholders = unique_ids.map((_, i) => `$${i + 2}`).join(',');
         const itemsResult = await client.query(`SELECT SUM(i.value) as total_value FROM user_inventory ui JOIN items i ON ui.item_id = i.id WHERE ui.user_id = $1 AND ui.id IN (${placeholders})`, [user_id, ...unique_ids]);
         if (itemsResult.rows.length === 0 || !itemsResult.rows[0].total_value) throw new Error('Предметы не найдены');
+        
         const totalValue = parseInt(itemsResult.rows[0].total_value, 10);
-        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, totalValue, `sell_multiple_${unique_ids.length}_items`);
         await client.query(`DELETE FROM user_inventory WHERE id IN (${placeholders}) AND user_id = $1`, [user_id, ...unique_ids]);
+
+        const balanceResponse = await changeUserBalance(client, telegram_id, totalValue, `sell_multiple_${unique_ids.length}_items`);
+        
+        await client.query('COMMIT');
+
         res.json({ success: true, newBalance: balanceResponse.new_balance, soldAmount: totalValue });
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error("Ошибка при массовой продаже:", err);
         res.status(500).json({ error: err.message });
-    } finally { client.release(); }
+    } finally {
+        client.release();
+    }
 });
+
 app.post('/api/case/open', async (req, res) => {
     const { user_id, quantity, telegram_id } = req.body;
     const casePrice = 100;
     const totalCost = casePrice * (quantity || 1);
     if (!user_id || !quantity || quantity < 1 || !telegram_id) return res.status(400).json({ error: 'Неверные данные' });
+    
     const client = await pool.connect();
     try {
-        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, -totalCost, `open_case_${quantity}`);
         await client.query('BEGIN');
+
+        const balanceResponse = await changeUserBalance(client, telegram_id, -totalCost, `open_case_${quantity}`);
+
         const caseItemsResult = await client.query('SELECT i.id, i.name, i."imageSrc", i.value FROM items i JOIN case_items ci ON i.id = ci.item_id WHERE ci.case_id = 1');
         let caseItems = caseItemsResult.rows.length > 0 ? caseItemsResult.rows : (await client.query('SELECT id, name, "imageSrc", value FROM items')).rows;
         if (caseItems.length === 0) throw new Error('Нет предметов в игре');
+        
         const wonItems = [];
         for (let i = 0; i < quantity; i++) {
             const randomItem = caseItems[Math.floor(Math.random() * caseItems.length)];
             const result = await client.query("INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2) RETURNING id", [user_id, randomItem.id]);
             wonItems.push({ ...randomItem, uniqueId: result.rows[0].id });
         }
+        
         await client.query('COMMIT');
         res.json({ success: true, newBalance: balanceResponse.new_balance, wonItems });
+
     } catch (err) {
         await client.query('ROLLBACK');
         console.error("Ошибка открытия кейса:", err);
         res.status(500).json({ error: err.message });
-    } finally { client.release(); }
+    } finally {
+        client.release();
+    }
 });
+
 app.post('/api/contest/buy-ticket', async (req, res) => {
     const { contest_id, telegram_id, quantity, user_id } = req.body;
     if (!contest_id || !telegram_id || !quantity || quantity < 1 || !user_id) return res.status(400).json({ error: 'Неверные данные' });
+    
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+
         const contestResult = await client.query("SELECT * FROM contests WHERE id = $1 AND is_active = TRUE", [contest_id]);
-        if (contestResult.rows.length === 0 || contestResult.rows[0].end_time <= Date.now()) throw new Error('Конкурс неактивен');
+        if (contestResult.rows.length === 0 || contestResult.rows[0].end_time <= new Date()) throw new Error('Конкурс неактивен');
+        
         const contest = contestResult.rows[0];
         const totalCost = contest.ticket_price * quantity;
-        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, -totalCost, `buy_ticket_${quantity}_contest_${contest_id}`);
+        const balanceResponse = await changeUserBalance(client, telegram_id, -totalCost, `buy_ticket_${quantity}_contest_${contest_id}`);
+        
         for (let i = 0; i < quantity; i++) {
             await client.query("INSERT INTO user_tickets (contest_id, user_id, telegram_id) VALUES ($1, $2, $3)", [contest_id, user_id, telegram_id]);
         }
+        
         await client.query('COMMIT');
         res.json({ success: true, newBalance: balanceResponse.new_balance });
     } catch (err) {
         await client.query('ROLLBACK');
         res.status(500).json({ error: err.message });
-    } finally { client.release(); }
+    } finally {
+        client.release();
+    }
 });
+
 app.get('/api/case/items_full', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -241,7 +310,7 @@ app.get('/api/game_settings', async (req, res) => {
 app.get('/api/contest/current', async (req, res) => {
     const client = await pool.connect();
     try {
-        const contestResult = await client.query(`SELECT c.id, c.end_time, c.ticket_price, i.name AS "itemName", i."imageSrc" AS "itemImageSrc" FROM contests c JOIN items i ON c.item_id = i.id WHERE c.is_active = TRUE AND c.end_time > $1 ORDER BY c.id DESC LIMIT 1`, [Date.now()]);
+        const contestResult = await client.query(`SELECT c.id, c.end_time, c.ticket_price, i.name AS "itemName", i."imageSrc" AS "itemImageSrc" FROM contests c JOIN items i ON c.item_id = i.id WHERE c.is_active = TRUE AND c.end_time > NOW() ORDER BY c.id DESC LIMIT 1`);
         if (contestResult.rows.length === 0) return res.json(null);
         const contest = contestResult.rows[0];
         const ticketCountResult = await client.query("SELECT COUNT(*) AS count, COUNT(DISTINCT user_id) as participants FROM user_tickets WHERE contest_id = $1", [contest.id]);
@@ -257,47 +326,76 @@ app.get('/api/contest/current', async (req, res) => {
 });
 
 // --- API ИГР ---
-// ... (API для Coinflip, RPS, Slots, Upgrade без изменений)
 app.post('/api/games/coinflip', async (req, res) => {
     const { telegram_id, bet, choice } = req.body;
     if (!telegram_id || !bet || !choice || bet <= 0) return res.status(400).json({ error: 'Неверные параметры' });
+    
+    const client = await pool.connect();
     try {
+        await client.query('BEGIN');
         const result = Math.random() < 0.5 ? 'heads' : 'tails';
         const winAmount = result === choice ? bet * 2 : 0;
         const delta = winAmount - bet;
-        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, delta, `coinflip_bet_${bet}`);
+        const balanceResponse = await changeUserBalance(client, telegram_id, delta, `coinflip_bet_${bet}`);
+        await client.query('COMMIT');
         res.json({ success: true, result, winAmount, newBalance: balanceResponse.new_balance });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) { 
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: error.message }); 
+    } finally {
+        client.release();
+    }
 });
+
 app.post('/api/games/rps', async (req, res) => {
     const { telegram_id, bet, choice } = req.body;
     if (!telegram_id || !bet || !choice || bet <= 0) return res.status(400).json({ error: 'Неверные параметры' });
     const choices = ['rock', 'paper', 'scissors'];
     if (!choices.includes(choice)) return res.status(400).json({ error: 'Неверный выбор' });
+
+    const client = await pool.connect();
     try {
+        await client.query('BEGIN');
         const computerChoice = choices[Math.floor(Math.random() * 3)];
         let winAmount = 0;
         if (choice === computerChoice) winAmount = bet;
         else if ((choice === 'rock' && computerChoice === 'scissors') || (choice === 'paper' && computerChoice === 'rock') || (choice === 'scissors' && computerChoice === 'paper')) winAmount = bet * 2;
         const delta = winAmount - bet;
-        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, delta, `rps_bet_${bet}`);
+        const balanceResponse = await changeUserBalance(client, telegram_id, delta, `rps_bet_${bet}`);
+        await client.query('COMMIT');
         res.json({ success: true, computerChoice, winAmount, newBalance: balanceResponse.new_balance });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: error.message });
+    } finally {
+        client.release();
+    }
 });
+
 app.post('/api/games/slots', async (req, res) => {
     const { telegram_id, bet } = req.body;
     if (!telegram_id || !bet || bet <= 0) return res.status(400).json({ error: 'Неверные параметры' });
+
+    const client = await pool.connect();
     try {
+        await client.query('BEGIN');
         const symbols = ['Lemon', 'Cherry', 'Seven'];
         const results = [symbols[Math.floor(Math.random() * 3)], symbols[Math.floor(Math.random() * 3)], symbols[Math.floor(Math.random() * 3)]];
         let winAmount = 0;
         if (results[0] === results[1] && results[1] === results[2]) winAmount = bet * 5;
         else if (results[0] === results[1] || results[1] === results[2]) winAmount = bet * 2;
         const delta = winAmount - bet;
-        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, delta, `slots_bet_${bet}`);
+        const balanceResponse = await changeUserBalance(client, telegram_id, delta, `slots_bet_${bet}`);
+        await client.query('COMMIT');
         res.json({ success: true, reels: results, winAmount, newBalance: balanceResponse.new_balance });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: error.message });
+    } finally {
+        client.release();
+    }
 });
+
 app.post('/api/games/upgrade', async (req, res) => {
     const { telegram_id, user_id, yourItemUniqueId, desiredItemId } = req.body;
     if (!telegram_id || !user_id || !yourItemUniqueId || !desiredItemId) return res.status(400).json({ error: 'Неверные параметры' });
@@ -334,7 +432,8 @@ app.post('/api/games/miner/start', async (req, res) => {
     if (!telegram_id || !bet || bet < 1) return res.status(400).json({ error: 'Неверная ставка' });
     const client = await pool.connect();
     try {
-        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, -bet, `miner_start_bet_${bet}`);
+        await client.query('BEGIN');
+        const balanceResponse = await changeUserBalance(client, telegram_id, -bet, `miner_start_bet_${bet}`);
         const totalCells = 12, bombs = 6;
         const bombIndices = new Set();
         while (bombIndices.size < bombs) {
@@ -348,9 +447,12 @@ app.post('/api/games/miner/start', async (req, res) => {
             totalWin: 0
         };
         await client.query("INSERT INTO game_sessions (id, telegram_id, game_type, game_state) VALUES ($1, $2, 'miner', $3)", [sessionId, telegram_id, gameState]);
+        await client.query('COMMIT');
         res.json({ success: true, sessionId, newBalance: balanceResponse.new_balance });
-    } catch (error) { res.status(500).json({ error: error.message }); }
-    finally { client.release(); }
+    } catch (error) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: error.message });
+    } finally { client.release(); }
 });
 
 app.post('/api/games/miner/select', async (req, res) => {
@@ -385,18 +487,22 @@ app.post('/api/games/miner/cashout', async (req, res) => {
     if (!sessionId) return res.status(400).json({ error: "ID сессии не найден" });
     const client = await pool.connect();
     try {
+        await client.query('BEGIN');
         const sessionRes = await client.query("SELECT * FROM game_sessions WHERE id = $1", [sessionId]);
         if (sessionRes.rows.length === 0) return res.status(404).json({ error: 'Игра не найдена' });
 
         const session = sessionRes.rows[0].game_state;
         const telegram_id = sessionRes.rows[0].telegram_id;
 
-        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, session.totalWin, `miner_cashout_${session.totalWin}`);
+        const balanceResponse = await changeUserBalance(client, telegram_id, session.totalWin, `miner_cashout_${session.totalWin}`);
         await client.query("DELETE FROM game_sessions WHERE id = $1", [sessionId]);
 
+        await client.query('COMMIT');
         res.json({ success: true, winAmount: session.totalWin, newBalance: balanceResponse.new_balance });
-    } catch (error) { res.status(500).json({ error: error.message }); }
-    finally { client.release(); }
+    } catch (error) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: error.message });
+    } finally { client.release(); }
 });
 
 app.post('/api/games/tower/start', async (req, res) => {
@@ -405,7 +511,8 @@ app.post('/api/games/tower/start', async (req, res) => {
     if (!telegram_id || !bet || bet < minBet) return res.status(400).json({ error: `Минимальная ставка ${minBet}` });
     const client = await pool.connect();
     try {
-        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, -bet, `tower_start_bet_${bet}`);
+        await client.query('BEGIN');
+        const balanceResponse = await changeUserBalance(client, telegram_id, -bet, `tower_start_bet_${bet}`);
         
         const levels = 5;
         const multipliers = [1.5, 2.5, 4, 8, 16];
@@ -420,10 +527,13 @@ app.post('/api/games/tower/start', async (req, res) => {
         };
         
         await client.query("INSERT INTO game_sessions (id, telegram_id, game_type, game_state) VALUES ($1, $2, 'tower', $3)", [sessionId, telegram_id, gameState]);
+        await client.query('COMMIT');
         
         res.json({ success: true, sessionId, newBalance: balanceResponse.new_balance, payouts: gameState.payouts });
-    } catch (error) { res.status(500).json({ error: error.message }); }
-    finally { client.release(); }
+    } catch (error) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: error.message });
+    } finally { client.release(); }
 });
 
 app.post('/api/games/tower/select', async (req, res) => {
@@ -448,15 +558,21 @@ app.post('/api/games/tower/select', async (req, res) => {
         const isWin = session.currentLevel === session.levels;
         
         if (isWin) {
-            const balanceResponse = await changeBalanceViaBotAPI(telegram_id, cashoutAmount, `tower_win_${cashoutAmount}`);
+            await client.query('BEGIN');
+            const balanceResponse = await changeUserBalance(client, telegram_id, cashoutAmount, `tower_win_${cashoutAmount}`);
             await client.query("DELETE FROM game_sessions WHERE id = $1", [sessionId]);
+            await client.query('COMMIT');
             return res.json({ success: true, isBomb: false, isWin: true, winAmount: cashoutAmount, newBalance: balanceResponse.new_balance, bombCol });
         } else {
             await client.query("UPDATE game_sessions SET game_state = $1 WHERE id = $2", [session, sessionId]);
             res.json({ success: true, isBomb: false, isWin: false, cashoutAmount, bombCol });
         }
-    } catch (error) { res.status(500).json({ error: error.message }); }
-    finally { client.release(); }
+    } catch (error) {
+        if(client) await client.query('ROLLBACK');
+        res.status(500).json({ error: error.message });
+    } finally {
+        if(client) client.release();
+    }
 });
 
 app.post('/api/games/tower/cashout', async (req, res) => {
@@ -464,6 +580,7 @@ app.post('/api/games/tower/cashout', async (req, res) => {
     if (!sessionId) return res.status(400).json({ error: "ID сессии не найден" });
     const client = await pool.connect();
     try {
+        await client.query('BEGIN');
         const sessionRes = await client.query("SELECT * FROM game_sessions WHERE id = $1", [sessionId]);
         if (sessionRes.rows.length === 0) return res.status(404).json({ error: 'Игра не найдена' });
 
@@ -473,30 +590,40 @@ app.post('/api/games/tower/cashout', async (req, res) => {
         if (session.currentLevel === 0) return res.status(400).json({ error: 'Нечего забирать' });
 
         const winAmount = session.payouts[session.currentLevel - 1];
-        const balanceResponse = await changeBalanceViaBotAPI(telegram_id, winAmount, `tower_cashout_${winAmount}`);
+        const balanceResponse = await changeUserBalance(client, telegram_id, winAmount, `tower_cashout_${winAmount}`);
         await client.query("DELETE FROM game_sessions WHERE id = $1", [sessionId]);
+        await client.query('COMMIT');
         res.json({ success: true, winAmount, newBalance: balanceResponse.new_balance });
-    } catch (error) { res.status(500).json({ error: error.message }); }
-    finally { client.release(); }
+    } catch (error) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: error.message });
+    } finally { client.release(); }
 });
 
 
 // --- ADMIN ---
-// ... (все админские маршруты остаются без изменений)
 app.use('/api/admin', checkAdminSecret);
 app.post('/api/admin/user/balance', async (req, res) => {
     const { telegramId, newBalance } = req.body;
     const client = await pool.connect();
     try {
+        await client.query('BEGIN');
         const user = await client.query("SELECT balance_uah FROM users WHERE telegram_id = $1", [telegramId]);
         if (user.rows.length === 0) return res.status(404).json({ error: "Пользователь не найден" });
+        
         const currentBalance = parseFloat(user.rows[0].balance_uah);
         const delta = newBalance - currentBalance;
-        const response = await changeBalanceViaBotAPI(telegramId, delta, 'admin_panel_update');
+        
+        const response = await changeUserBalance(client, telegramId, delta, 'admin_panel_update');
+        
+        await client.query('COMMIT');
         res.json({ success: true, new_balance: response.new_balance });
-    } catch (error) { res.status(500).json({ error: error.message }); }
-    finally { client.release(); }
+    } catch (error) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: error.message });
+    } finally { client.release(); }
 });
+
 app.get('/api/admin/users', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -548,7 +675,7 @@ app.post('/api/admin/game_settings', async (req, res) => {
     try {
         await client.query('BEGIN');
         for (const [key, value] of Object.entries(settings)) {
-            await client.query("UPDATE game_settings SET value = $1 WHERE key = $2", [value.toString(), key]);
+            await client.query("INSERT INTO game_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2", [key, value.toString()]);
         }
         await client.query('COMMIT');
         res.json({ success: true });
@@ -560,12 +687,12 @@ app.post('/api/admin/game_settings', async (req, res) => {
 app.post('/api/admin/contest/create', async (req, res) => {
     const { item_id, ticket_price, duration_hours } = req.body;
     if (!item_id || !ticket_price || !duration_hours) return res.status(400).json({ error: 'Все поля обязательны' });
-    const endTime = Date.now() + duration_hours * 60 * 60 * 1000;
+    const endTime = new Date(Date.now() + duration_hours * 60 * 60 * 1000);
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
         await client.query("UPDATE contests SET is_active = FALSE WHERE is_active = TRUE");
-        const result = await client.query("INSERT INTO contests (item_id, ticket_price, end_time) VALUES ($1, $2, $3) RETURNING id", [item_id, ticket_price, endTime]);
+        const result = await client.query("INSERT INTO contests (item_id, ticket_price, end_time, is_active) VALUES ($1, $2, $3, TRUE) RETURNING id", [item_id, ticket_price, endTime]);
         await client.query('COMMIT');
         res.status(201).json({ success: true, contestId: result.rows[0].id });
     } catch (err) {
@@ -581,7 +708,7 @@ app.post('/api/admin/contest/draw/:id', async (req, res) => {
         const contestResult = await client.query("SELECT * FROM contests WHERE id = $1 AND is_active = TRUE", [contestId]);
         if (contestResult.rows.length === 0) throw new Error('Активный конкурс не найден');
         const contest = contestResult.rows[0];
-        const participantsResult = await client.query("SELECT DISTINCT user_id, telegram_id FROM user_tickets WHERE contest_id = $1", [contestId]);
+        const participantsResult = await client.query("SELECT user_id, telegram_id FROM user_tickets WHERE contest_id = $1", [contestId]);
         if (participantsResult.rows.length === 0) {
             await client.query("UPDATE contests SET is_active = FALSE WHERE id = $1", [contestId]);
             await client.query('COMMIT');
