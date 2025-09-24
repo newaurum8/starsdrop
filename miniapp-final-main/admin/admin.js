@@ -222,30 +222,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function createContest() {
-        const contestData = {
-            item_id: contestItemSelect.value,
-            ticket_price: contestTicketPriceInput.value,
-            duration_hours: contestDurationInput.value
-        };
+    const itemId = contestItemSelect.value;
+    const ticketPrice = contestTicketPriceInput.value;
+    const duration = contestDurationInput.value;
 
-        try {
-            const response = await fetch(`${API_BASE_URL}/api/admin/contest/create?secret=${ADMIN_SECRET_KEY}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(contestData)
-            });
-            const result = await response.json();
-            if (result.success) {
-                alert('Новый конкурс успешно создан!');
-                fetchAllAdminData(); 
-            } else {
-                throw new Error(result.error || 'Ошибка создания конкурса');
-            }
-        } catch (error) {
-            console.error('Ошибка:', error);
-            alert(`Не удалось создать конкурс: ${error.message}`);
-        }
+    // --- НАЧАЛО БЛОКА ПРОВЕРКИ ---
+    if (!itemId || itemId === "undefined") {
+        alert("Критическая ошибка: Предмет для розыгрыша не выбран или его ID не определён. Пожалуйста, обновите страницу и попробуйте снова.");
+        return;
     }
+    if (!ticketPrice || !duration || Number(ticketPrice) <= 0 || Number(duration) <= 0) {
+        alert("Ошибка валидации: Пожалуйста, убедитесь, что цена билета и продолжительность указаны корректно и являются положительными числами.");
+        return;
+    }
+    // --- КОНЕЦ БЛОКА ПРОВЕРКИ ---
+
+    const contestData = {
+        item_id: itemId,
+        ticket_price: ticketPrice,
+        duration_hours: duration
+    };
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/contest/create?secret=${ADMIN_SECRET_KEY}`, {
 
     async function drawWinner() {
         if (!currentContest || !confirm('Вы уверены, что хотите завершить конкурс и определить победителя досрочно?')) {
@@ -277,4 +276,5 @@ document.addEventListener('DOMContentLoaded', () => {
     
     fetchAllAdminData();
 });
+
 
