@@ -36,7 +36,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 fetch(`${API_BASE_URL}/api/admin/items?secret=${ADMIN_SECRET_KEY}`).then(res => res.json()),
                 fetch(`${API_BASE_URL}/api/admin/case/items?secret=${ADMIN_SECRET_KEY}`).then(res => res.json()),
                 fetch(`${API_BASE_URL}/api/game_settings?secret=${ADMIN_SECRET_KEY}`).then(res => res.json()),
-                fetch(`${API_BASE_URL}/api/contest/current`).then(res => res.json()) 
+                fetch(`${API_BASE_URL}/api/contest/current`, { cache: 'no-cache' }).then(res => res.json())
             ]);
             
             
@@ -277,3 +277,4 @@ document.addEventListener('DOMContentLoaded', () => {
     
     fetchAllAdminData();
 });
+
