@@ -85,7 +85,6 @@ async function changeBalanceViaBotAPI(telegram_id, delta, reason) {
 
 // --- ОТДАЧА СТАТИЧЕСКИХ ФАЙЛОВ ---
 app.use(express.static(__dirname));
-app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
 // --- ЗАЩИТА АДМИН-ПАНЕЛИ ---
 const checkAdminSecret = (req, res, next) => {
@@ -99,11 +98,17 @@ const checkAdminSecret = (req, res, next) => {
 
 // --- ОСНОВНЫЕ МАРШРУТЫ ---
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+
+// Сначала проверяем секрет для доступа к странице админки
 app.get('/admin', (req, res) => {
     checkAdminSecret(req, res, () => {
         res.sendFile(path.join(__dirname, 'admin', 'index.html'));
     });
 });
+
+// И только потом подключаем статику (CSS, JS) для админки
+app.use('/admin', express.static(path.join(__dirname, 'admin')));
+
 
 // --- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ---
 async function initializeDb() {
@@ -159,25 +164,25 @@ app.get('/api/user/inventory', async (req, res) => {
 app.post('/api/user/inventory/sell', async (req, res) => {
     const { user_id, unique_id, telegram_id } = req.body;
     if (!user_id || !unique_id || !telegram_id) return res.status(400).json({ error: 'Неверные данные для продажи' });
-    
+
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
 
         const itemResult = await client.query('SELECT i.value FROM user_inventory ui JOIN items i ON ui.item_id = i.id WHERE ui.id = $1 AND ui.user_id = $2 FOR UPDATE', [unique_id, user_id]);
         if (itemResult.rows.length === 0) throw new Error('Предмет не найден в инвентаре или уже продается.');
-        
+
         const itemValue = itemResult.rows[0].value;
-        
+
         // Сначала удаляем предмет
         await client.query("DELETE FROM user_inventory WHERE id = $1 AND user_id = $2", [unique_id, user_id]);
-        
+
         // Потом начисляем баланс
         const balanceResponse = await changeBalanceViaBotAPI(telegram_id, itemValue, `sell_item_${unique_id}`);
-        
+
         // Синхронизируем локальный баланс
         await client.query('UPDATE users SET balance_uah = $1 WHERE telegram_id = $2', [balanceResponse.new_balance, telegram_id]);
-        
+
         await client.query('COMMIT');
         res.json({ success: true, newBalance: balanceResponse.new_balance });
     } catch (err) {
@@ -190,7 +195,7 @@ app.post('/api/user/inventory/sell', async (req, res) => {
 app.post('/api/user/inventory/sell-multiple', async (req, res) => {
     const { user_id, unique_ids, telegram_id } = req.body;
     if (!user_id || !Array.isArray(unique_ids) || unique_ids.length === 0 || !telegram_id) return res.status(400).json({ error: 'Неверные данные' });
-    
+
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -198,15 +203,15 @@ app.post('/api/user/inventory/sell-multiple', async (req, res) => {
         const placeholders = unique_ids.map((_, i) => `$${i + 2}`).join(',');
         const itemsResult = await client.query(`SELECT SUM(i.value) as total_value FROM user_inventory ui JOIN items i ON ui.item_id = i.id WHERE ui.user_id = $1 AND ui.id IN (${placeholders})`, [user_id, ...unique_ids]);
         if (itemsResult.rows.length === 0 || !itemsResult.rows[0].total_value) throw new Error('Предметы не найдены');
-        
+
         const totalValue = parseInt(itemsResult.rows[0].total_value, 10);
-        
+
         await client.query(`DELETE FROM user_inventory WHERE id IN (${placeholders}) AND user_id = $1`, [user_id, ...unique_ids]);
-        
+
         const balanceResponse = await changeBalanceViaBotAPI(telegram_id, totalValue, `sell_multiple_${unique_ids.length}_items`);
 
         await client.query('UPDATE users SET balance_uah = $1 WHERE telegram_id = $2', [balanceResponse.new_balance, telegram_id]);
-        
+
         await client.query('COMMIT');
         res.json({ success: true, newBalance: balanceResponse.new_balance, soldAmount: totalValue });
     } catch (err) {
@@ -233,7 +238,7 @@ app.post('/api/case/open', async (req, res) => {
         const caseItemsResult = await client.query('SELECT i.id, i.name, i."imageSrc", i.value FROM items i JOIN case_items ci ON i.id = ci.item_id WHERE ci.case_id = 1');
         let caseItems = caseItemsResult.rows.length > 0 ? caseItemsResult.rows : (await client.query('SELECT id, name, "imageSrc", value FROM items')).rows;
         if (caseItems.length === 0) throw new Error('Нет предметов в игре');
-        
+
         const wonItems = [];
         for (let i = 0; i < quantity; i++) {
             const randomItem = caseItems[Math.floor(Math.random() * caseItems.length)];
@@ -247,7 +252,7 @@ app.post('/api/case/open', async (req, res) => {
         await client.query('COMMIT');
         res.json({ success: true, newBalance: balanceResponse.new_balance, wonItems });
     } catch (err) {
-        await client.query('ROLLBACK');
+        await client.query('ROLLBACK').catch(console.error);
         console.error("Ошибка открытия кейса:", err.message);
         res.status(500).json({ error: err.message });
     } finally {
@@ -258,7 +263,7 @@ app.post('/api/case/open', async (req, res) => {
 app.post('/api/contest/buy-ticket', async (req, res) => {
     const { contest_id, telegram_id, quantity, user_id } = req.body;
     if (!contest_id || !telegram_id || !quantity || quantity < 1 || !user_id) return res.status(400).json({ error: 'Неверные данные' });
-    
+
     const client = await pool.connect();
     try {
         const contestResult = await client.query("SELECT * FROM contests WHERE id = $1 AND is_active = TRUE", [contest_id]);
@@ -274,10 +279,10 @@ app.post('/api/contest/buy-ticket', async (req, res) => {
         }
         await client.query('UPDATE users SET balance_uah = $1 WHERE telegram_id = $2', [balanceResponse.new_balance, telegram_id]);
         await client.query('COMMIT');
-        
+
         res.json({ success: true, newBalance: balanceResponse.new_balance });
     } catch (err) {
-        await client.query('ROLLBACK');
+        await client.query('ROLLBACK').catch(console.error);
         res.status(500).json({ error: err.message });
     } finally {
         client.release();
@@ -380,25 +385,25 @@ app.post('/api/games/upgrade', async (req, res) => {
         await client.query('BEGIN');
         const yourItemRes = await client.query('SELECT i.id, i.value FROM user_inventory ui JOIN items i ON ui.item_id = i.id WHERE ui.id = $1 AND ui.user_id = $2', [yourItemUniqueId, user_id]);
         if (yourItemRes.rows.length === 0) throw new Error('Предмет для апгрейда не найден или уже использован.');
-        
+
         const desiredItemRes = await client.query('SELECT * FROM items WHERE id = $1', [desiredItemId]);
         if (desiredItemRes.rows.length === 0) throw new Error('Желаемый предмет не найден');
-        
+
         const yourItem = yourItemRes.rows[0];
         const desiredItem = desiredItemRes.rows[0];
         const maxChance = 95;
         let chance = (yourItem.value / desiredItem.value) * maxChance;
         if (desiredItem.value <= yourItem.value) chance = maxChance;
         const isSuccess = Math.random() * 100 < Math.min(chance, maxChance);
-        
+
         await client.query('DELETE FROM user_inventory WHERE id = $1 AND user_id = $2', [yourItemUniqueId, user_id]);
-        
+
         let newItem = null;
         if (isSuccess) {
             const newItemRes = await client.query('INSERT INTO user_inventory (user_id, item_id) VALUES ($1, $2) RETURNING id', [user_id, desiredItem.id]);
             newItem = { ...desiredItem, uniqueId: newItemRes.rows[0].id };
         }
-        
+
         await client.query('COMMIT');
         res.json({ success: true, isSuccess, newItem });
     } catch (error) {
@@ -414,7 +419,7 @@ app.post('/api/games/miner/start', async (req, res) => {
     try {
         const balanceResponse = await changeBalanceViaBotAPI(telegram_id, -bet, `miner_start_bet_${bet}`);
         await client.query('UPDATE users SET balance_uah = $1 WHERE telegram_id = $2', [balanceResponse.new_balance, telegram_id]);
-        
+
         const totalCells = 12, bombs = 6;
         const bombIndices = new Set();
         while (bombIndices.size < bombs) {
@@ -424,8 +429,8 @@ app.post('/api/games/miner/start', async (req, res) => {
         const gameState = { bet, grid: Array.from({ length: totalCells }, (_, i) => ({ isBomb: bombIndices.has(i) })), openedCrystals: 0, totalWin: 0 };
         await client.query("INSERT INTO game_sessions (id, telegram_id, game_type, game_state) VALUES ($1, $2, 'miner', $3)", [sessionId, telegram_id, gameState]);
         res.json({ success: true, sessionId, newBalance: balanceResponse.new_balance });
-    } catch (error) { 
-        res.status(500).json({ error: error.message }); 
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     } finally { client.release(); }
 });
 
@@ -460,10 +465,10 @@ app.post('/api/games/miner/cashout', async (req, res) => {
         if (sessionRes.rows.length === 0) return res.status(404).json({ error: 'Игра не найдена' });
         const session = sessionRes.rows[0].game_state;
         const telegram_id = sessionRes.rows[0].telegram_id;
-        
+
         const balanceResponse = await changeBalanceViaBotAPI(telegram_id, session.totalWin, `miner_cashout_${session.totalWin}`);
         await client.query('UPDATE users SET balance_uah = $1 WHERE telegram_id = $2', [balanceResponse.new_balance, telegram_id]);
-        
+
         await client.query("DELETE FROM game_sessions WHERE id = $1", [sessionId]);
         res.json({ success: true, winAmount: session.totalWin, newBalance: balanceResponse.new_balance });
     } catch (error) { res.status(500).json({ error: error.message }); }
@@ -478,7 +483,7 @@ app.post('/api/games/tower/start', async (req, res) => {
     try {
         const balanceResponse = await changeBalanceViaBotAPI(telegram_id, -bet, `tower_start_bet_${bet}`);
         await client.query('UPDATE users SET balance_uah = $1 WHERE telegram_id = $2', [balanceResponse.new_balance, telegram_id]);
-        
+
         const levels = 5;
         const multipliers = [1.5, 2.5, 4, 8, 16];
         const sessionId = uuidv4();
@@ -533,10 +538,10 @@ app.post('/api/games/tower/cashout', async (req, res) => {
         const telegram_id = sessionRes.rows[0].telegram_id;
         if (session.currentLevel === 0) return res.status(400).json({ error: 'Нечего забирать' });
         const winAmount = session.payouts[session.currentLevel - 1];
-        
+
         const balanceResponse = await changeBalanceViaBotAPI(telegram_id, winAmount, `tower_cashout_${winAmount}`);
         await client.query('UPDATE users SET balance_uah = $1 WHERE telegram_id = $2', [balanceResponse.new_balance, telegram_id]);
-        
+
         await client.query("DELETE FROM game_sessions WHERE id = $1", [sessionId]);
         res.json({ success: true, winAmount, newBalance: balanceResponse.new_balance });
     } catch (error) {
