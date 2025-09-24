@@ -5,10 +5,11 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const fetch = require('node-fetch');
 const crypto = require('crypto');
-const NodeCache = require('node-cache');
 
+// Загружаем переменные окружения из .env файла
 require('dotenv').config();
 
+// --- ПРОВЕРКА КЛЮЧЕВЫХ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ---
 const requiredEnvVars = ['DATABASE_URL', 'ADMIN_SECRET', 'MINI_APP_API_SECRET'];
 const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
 
@@ -17,6 +18,7 @@ if (missingEnvVars.length > 0) {
     process.exit(1);
 }
 
+// --- ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ ---
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -24,8 +26,6 @@ const connectionString = process.env.DATABASE_URL;
 const ADMIN_SECRET = process.env.ADMIN_SECRET;
 const MINI_APP_API_SECRET = process.env.MINI_APP_API_SECRET;
 const BOT_API_URL = 'http://91.239.235.200:8001/api/v1/balance/change';
-
-const appCache = new NodeCache({ stdTTL: 300 });
 
 const pool = new Pool({
     connectionString: connectionString,
@@ -42,6 +42,8 @@ pool.on('error', (err, client) => {
 app.use(cors());
 app.use(express.json());
 
+
+// --- ХЕЛПЕР ДЛЯ ИЗМЕНЕНИЯ БАЛАНСА ЧЕРЕЗ API БОТА ---
 async function changeBalanceViaBotAPI(telegram_id, delta, reason) {
     const body = JSON.stringify({
         user_id: telegram_id,
@@ -49,7 +51,6 @@ async function changeBalanceViaBotAPI(telegram_id, delta, reason) {
         reason: reason
     });
     const signature = crypto.createHmac('sha256', MINI_APP_API_SECRET).update(body).digest('hex');
-
     const response = await fetch(BOT_API_URL, {
         method: 'POST',
         headers: {
@@ -59,7 +60,6 @@ async function changeBalanceViaBotAPI(telegram_id, delta, reason) {
         },
         body: body
     });
-
     if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || `Ошибка API бота: ${response.statusText}`);
@@ -67,9 +67,11 @@ async function changeBalanceViaBotAPI(telegram_id, delta, reason) {
     return await response.json();
 }
 
+// --- ОТДАЧА СТАТИЧЕСКИХ ФАЙЛОВ ---
 app.use(express.static(__dirname));
 app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
+// --- ЗАЩИТА АДМИН-ПАНЕЛИ ---
 const checkAdminSecret = (req, res, next) => {
     const secret = req.query.secret || req.body.secret;
     if (secret === ADMIN_SECRET) {
@@ -79,6 +81,7 @@ const checkAdminSecret = (req, res, next) => {
     }
 };
 
+// --- ОСНОВНЫЕ МАРШРУТЫ ---
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/admin', (req, res) => {
     checkAdminSecret(req, res, () => {
@@ -86,10 +89,13 @@ app.get('/admin', (req, res) => {
     });
 });
 
+// --- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ---
 async function initializeDb() {
     const client = await pool.connect();
     try {
         console.log('Успешное подключение к базе данных PostgreSQL');
+        
+        // ДОБАВЛЕНА ТАБЛИЦА ДЛЯ ИГРОВЫХ СЕССИЙ
         await client.query(`
             CREATE TABLE IF NOT EXISTS game_sessions (
                 id UUID PRIMARY KEY,
@@ -99,6 +105,7 @@ async function initializeDb() {
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
         `);
+
         console.log('База данных успешно инициализирована.');
     } catch (err) {
         console.error('Ошибка при инициализации БД:', err);
@@ -107,6 +114,8 @@ async function initializeDb() {
     }
 }
 
+// --- API Маршруты (клиентские) ---
+// ... (Маршруты get-or-create, inventory, sell, case, contest - без изменений)
 app.post('/api/user/get-or-create', async (req, res) => {
     const { telegram_id, username } = req.body;
     if (!telegram_id) return res.status(400).json({ error: "telegram_id является обязательным" });
@@ -123,7 +132,6 @@ app.post('/api/user/get-or-create', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
     finally { client.release(); }
 });
-
 app.get('/api/user/inventory', async (req, res) => {
     const { user_id } = req.query;
     if (!user_id) return res.status(400).json({ error: 'user_id является обязательным' });
@@ -134,7 +142,6 @@ app.get('/api/user/inventory', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
     finally { client.release(); }
 });
-
 app.post('/api/user/inventory/sell', async (req, res) => {
     const { user_id, unique_id, telegram_id } = req.body;
     if (!user_id || !unique_id || !telegram_id) return res.status(400).json({ error: 'Неверные данные для продажи' });
@@ -151,7 +158,6 @@ app.post('/api/user/inventory/sell', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { client.release(); }
 });
-
 app.post('/api/user/inventory/sell-multiple', async (req, res) => {
     const { user_id, unique_ids, telegram_id } = req.body;
     if (!user_id || !Array.isArray(unique_ids) || unique_ids.length === 0 || !telegram_id) return res.status(400).json({ error: 'Неверные данные' });
@@ -169,7 +175,6 @@ app.post('/api/user/inventory/sell-multiple', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { client.release(); }
 });
-
 app.post('/api/case/open', async (req, res) => {
     const { user_id, quantity, telegram_id } = req.body;
     const casePrice = 100;
@@ -196,7 +201,6 @@ app.post('/api/case/open', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { client.release(); }
 });
-
 app.post('/api/contest/buy-ticket', async (req, res) => {
     const { contest_id, telegram_id, quantity, user_id } = req.body;
     if (!contest_id || !telegram_id || !quantity || quantity < 1 || !user_id) return res.status(400).json({ error: 'Неверные данные' });
@@ -218,35 +222,22 @@ app.post('/api/contest/buy-ticket', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { client.release(); }
 });
-
 app.get('/api/case/items_full', async (req, res) => {
-    if (appCache.has("case_items_full")) {
-        return res.json(appCache.get("case_items_full"));
-    }
     const client = await pool.connect();
     try {
         const { rows } = await client.query(`SELECT i.id, i.name, i."imageSrc", i.value FROM items i LEFT JOIN case_items ci ON i.id = ci.item_id WHERE ci.case_id = 1 OR (SELECT COUNT(*) FROM case_items) = 0`);
-        const items = rows.length > 0 ? rows : (await client.query('SELECT id, name, "imageSrc", value FROM items ORDER BY value DESC')).rows;
-        appCache.set("case_items_full", items);
-        res.json(items);
+        res.json(rows.length > 0 ? rows : (await client.query('SELECT id, name, "imageSrc", value FROM items ORDER BY value DESC')).rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
     finally { client.release(); }
 });
-
 app.get('/api/game_settings', async (req, res) => {
-    if (appCache.has("game_settings")) {
-        return res.json(appCache.get("game_settings"));
-    }
     const client = await pool.connect();
     try {
         const { rows } = await client.query("SELECT key, value FROM game_settings");
-        const settings = rows.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {});
-        appCache.set("game_settings", settings);
-        res.json(settings);
+        res.json(rows.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {}));
     } catch (err) { res.status(500).json({ error: err.message }); }
     finally { client.release(); }
 });
-
 app.get('/api/contest/current', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -265,6 +256,8 @@ app.get('/api/contest/current', async (req, res) => {
     finally { client.release(); }
 });
 
+// --- API ИГР ---
+// ... (API для Coinflip, RPS, Slots, Upgrade без изменений)
 app.post('/api/games/coinflip', async (req, res) => {
     const { telegram_id, bet, choice } = req.body;
     if (!telegram_id || !bet || !choice || bet <= 0) return res.status(400).json({ error: 'Неверные параметры' });
@@ -276,7 +269,6 @@ app.post('/api/games/coinflip', async (req, res) => {
         res.json({ success: true, result, winAmount, newBalance: balanceResponse.new_balance });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
-
 app.post('/api/games/rps', async (req, res) => {
     const { telegram_id, bet, choice } = req.body;
     if (!telegram_id || !bet || !choice || bet <= 0) return res.status(400).json({ error: 'Неверные параметры' });
@@ -292,7 +284,6 @@ app.post('/api/games/rps', async (req, res) => {
         res.json({ success: true, computerChoice, winAmount, newBalance: balanceResponse.new_balance });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
-
 app.post('/api/games/slots', async (req, res) => {
     const { telegram_id, bet } = req.body;
     if (!telegram_id || !bet || bet <= 0) return res.status(400).json({ error: 'Неверные параметры' });
@@ -307,7 +298,6 @@ app.post('/api/games/slots', async (req, res) => {
         res.json({ success: true, reels: results, winAmount, newBalance: balanceResponse.new_balance });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
-
 app.post('/api/games/upgrade', async (req, res) => {
     const { telegram_id, user_id, yourItemUniqueId, desiredItemId } = req.body;
     if (!telegram_id || !user_id || !yourItemUniqueId || !desiredItemId) return res.status(400).json({ error: 'Неверные параметры' });
@@ -336,6 +326,8 @@ app.post('/api/games/upgrade', async (req, res) => {
         res.status(500).json({ error: error.message });
     } finally { client.release(); }
 });
+
+// --- НОВЫЕ API ДЛЯ MINER И TOWER ---
 
 app.post('/api/games/miner/start', async (req, res) => {
     const { telegram_id, bet } = req.body;
@@ -488,8 +480,10 @@ app.post('/api/games/tower/cashout', async (req, res) => {
     finally { client.release(); }
 });
 
-app.use('/api/admin', checkAdminSecret);
 
+// --- ADMIN ---
+// ... (все админские маршруты остаются без изменений)
+app.use('/api/admin', checkAdminSecret);
 app.post('/api/admin/user/balance', async (req, res) => {
     const { telegramId, newBalance } = req.body;
     const client = await pool.connect();
@@ -503,7 +497,6 @@ app.post('/api/admin/user/balance', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
     finally { client.release(); }
 });
-
 app.get('/api/admin/users', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -512,7 +505,6 @@ app.get('/api/admin/users', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
     finally { client.release(); }
 });
-
 app.get('/api/admin/items', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -521,7 +513,6 @@ app.get('/api/admin/items', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
     finally { client.release(); }
 });
-
 app.get('/api/admin/case/items', async (req, res) => {
     const caseId = 1;
     const client = await pool.connect();
@@ -531,7 +522,6 @@ app.get('/api/admin/case/items', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
     finally { client.release(); }
 });
-
 app.post('/api/admin/case/items', async (req, res) => {
     const { itemIds } = req.body;
     const caseId = 1;
@@ -545,14 +535,12 @@ app.post('/api/admin/case/items', async (req, res) => {
             }
         }
         await client.query('COMMIT');
-        appCache.del("case_items_full");
         res.json({ success: true });
     } catch (err) {
         await client.query('ROLLBACK');
         res.status(500).json({ "error": err.message });
     } finally { client.release(); }
 });
-
 app.post('/api/admin/game_settings', async (req, res) => {
     const { settings } = req.body;
     if (!settings || typeof settings !== 'object') return res.status(400).json({ error: 'Неправильный формат' });
@@ -563,14 +551,12 @@ app.post('/api/admin/game_settings', async (req, res) => {
             await client.query("UPDATE game_settings SET value = $1 WHERE key = $2", [value.toString(), key]);
         }
         await client.query('COMMIT');
-        appCache.del("game_settings");
         res.json({ success: true });
     } catch (err) {
         await client.query('ROLLBACK');
         res.status(500).json({ "error": err.message });
     } finally { client.release(); }
 });
-
 app.post('/api/admin/contest/create', async (req, res) => {
     const { item_id, ticket_price, duration_hours } = req.body;
     if (!item_id || !ticket_price || !duration_hours) return res.status(400).json({ error: 'Все поля обязательны' });
@@ -587,7 +573,6 @@ app.post('/api/admin/contest/create', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { client.release(); }
 });
-
 app.post('/api/admin/contest/draw/:id', async (req, res) => {
     const contestId = req.params.id;
     const client = await pool.connect();
@@ -613,6 +598,7 @@ app.post('/api/admin/contest/draw/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { client.release(); }
 });
+
 
 app.listen(port, () => {
     console.log(`Сервер запущен на порту ${port}`);
