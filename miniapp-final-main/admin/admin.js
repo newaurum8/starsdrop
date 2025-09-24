@@ -52,7 +52,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
             
             populateContestItemSelect(items);
-            currentContest = contest;
+            // ИСПРАВЛЕНО: Проверяем, что конкурс - это валидный объект, а не null или объект ошибки
+            if (contest && contest.id) {
+                currentContest = contest;
+            } else {
+                currentContest = null;
+            }
             renderCurrentContest();
 
         } catch (error) {
@@ -205,7 +210,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function renderCurrentContest() {
-        if (currentContest) {
+        // ИСПРАВЛЕНО: Проверяем, что конкурс существует и у него есть ID
+        if (currentContest && currentContest.id) {
             const endDate = new Date(Number(currentContest.end_time)).toLocaleString();
             contestDetailsP.innerHTML = `
                 <strong>Приз:</strong> ${currentContest.itemName} <br>
@@ -248,7 +254,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function drawWinner() {
-        if (!currentContest || !confirm('Вы уверены, что хотите завершить конкурс и определить победителя досрочно?')) {
+        if (!currentContest || !currentContest.id || !confirm('Вы уверены, что хотите завершить конкурс и определить победителя досрочно?')) {
             return;
         }
         try {
