@@ -43,7 +43,7 @@ app.use(cors());
 app.use(express.json());
 
 
-// --- ФОНОВЫЙ ПРОЦЕСС СИНХРОНИЗАЦИИ БАЛАНСА ---
+// --- ФОНОВЫЙ ПРОЦЕСС СИНХРОНИЗАЦИИ БАЛАНСА (ИСПРАВЛЕННЫЙ) ---
 let isProcessingQueue = false;
 
 async function processPendingUpdates() {
@@ -53,9 +53,9 @@ async function processPendingUpdates() {
     const client = await pool.connect();
     try {
         const { rows } = await client.query('SELECT * FROM pending_balance_updates ORDER BY created_at ASC LIMIT 1');
+        
         if (rows.length === 0) {
-            isProcessingQueue = false;
-            client.release();
+            // Если задач нет, просто выходим. Соединение освободится в блоке finally.
             return;
         }
 
@@ -77,9 +77,7 @@ async function processPendingUpdates() {
         if (response.ok) {
             const result = await response.json();
             console.log(`[Balance Sync SUCCESS] Job ${job.id} for user ${job.telegram_id} completed.`);
-            // После успешной синхронизации удаляем задачу из очереди
             await client.query('DELETE FROM pending_balance_updates WHERE id = $1', [job.id]);
-            // И устанавливаем локальный баланс равным балансу из бота для полной синхронизации
             await client.query('UPDATE users SET balance_uah = $1 WHERE telegram_id = $2', [result.new_balance, job.telegram_id]);
         } else {
             const errorData = await response.text();
@@ -87,13 +85,13 @@ async function processPendingUpdates() {
         }
     } catch (error) {
         console.error(`[Balance Sync FAILED] Error processing job. Reason: ${error.message}`);
-        // Увеличиваем счетчик попыток, чтобы не обрабатывать "битые" задачи вечно
-        if (error.config && error.config.data) {
-             const failedJobId = JSON.parse(error.config.data).id;
-             await client.query('UPDATE pending_balance_updates SET attempts = attempts + 1 WHERE id = $1', [failedJobId]);
+        const { rows } = await client.query('SELECT id FROM pending_balance_updates ORDER BY created_at ASC LIMIT 1');
+        if (rows.length > 0) {
+            await client.query('UPDATE pending_balance_updates SET attempts = attempts + 1 WHERE id = $1', [rows[0].id]);
         }
     } finally {
         isProcessingQueue = false;
+        // Освобождаем соединение ТОЛЬКО ЗДЕСЬ, один раз в конце.
         client.release();
     }
 }
