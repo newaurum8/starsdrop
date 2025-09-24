@@ -50,30 +50,21 @@ async function changeBalanceViaBotAPI(telegram_id, delta, reason) {
     });
     const signature = crypto.createHmac('sha256', MINI_APP_API_SECRET).update(body).digest('hex');
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => {
-        controller.abort();
-    }, 15000); // Increased timeout to 15 seconds
+    const response = await fetch(BOT_API_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Signature': signature,
+            'X-Idempotency-Key': uuidv4()
+        },
+        body: body
+    });
 
-    try {
-        const response = await fetch(BOT_API_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Signature': signature,
-                'X-Idempotency-Key': uuidv4()
-            },
-            body: body,
-            signal: controller.signal
-        });
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || `Ошибка API бота: ${response.statusText}`);
-        }
-        return await response.json();
-    } finally {
-        clearTimeout(timeout);
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Ошибка API бота: ${response.statusText}`);
     }
+    return await response.json();
 }
 
 app.use(express.static(__dirname));
