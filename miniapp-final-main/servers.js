@@ -53,7 +53,7 @@ async function changeBalanceViaBotAPI(telegram_id, delta, reason) {
     const controller = new AbortController();
     const timeout = setTimeout(() => {
         controller.abort();
-    }, 5000); // 5 seconds timeout
+    }, 15000); // Increased timeout to 15 seconds
 
     try {
         const response = await fetch(BOT_API_URL, {
