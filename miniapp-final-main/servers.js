@@ -310,7 +310,8 @@ app.get('/api/game_settings', async (req, res) => {
 app.get('/api/contest/current', async (req, res) => {
     const client = await pool.connect();
     try {
-        const contestResult = await client.query(`SELECT c.id, c.end_time, c.ticket_price, i.name AS "itemName", i."imageSrc" AS "itemImageSrc" FROM contests c JOIN items i ON c.item_id = i.id WHERE c.is_active = TRUE AND c.end_time > NOW() ORDER BY c.id DESC LIMIT 1`);
+        // ИСПРАВЛЕНИЕ: Изменено условие сравнения времени
+        const contestResult = await client.query(`SELECT c.id, c.end_time, c.ticket_price, i.name AS "itemName", i."imageSrc" AS "itemImageSrc" FROM contests c JOIN items i ON c.item_id = i.id WHERE c.is_active = TRUE AND c.end_time > (EXTRACT(EPOCH FROM NOW()) * 1000) ORDER BY c.id DESC LIMIT 1`);
         if (contestResult.rows.length === 0) return res.json(null);
         const contest = contestResult.rows[0];
         const ticketCountResult = await client.query("SELECT COUNT(*) AS count, COUNT(DISTINCT user_id) as participants FROM user_tickets WHERE contest_id = $1", [contest.id]);
@@ -617,6 +618,7 @@ app.post('/api/admin/game_settings', async (req, res) => {
 app.post('/api/admin/contest/create', async (req, res) => {
     const { item_id, ticket_price, duration_hours } = req.body;
     if (!item_id || !ticket_price || !duration_hours) return res.status(400).json({ error: 'Все поля обязательны' });
+    // ИСПРАВЛЕНИЕ: Преобразование даты в число миллисекунд
     const endTime = new Date(Date.now() + duration_hours * 60 * 60 * 1000).getTime();
     const client = await pool.connect();
     try {
@@ -665,4 +667,3 @@ app.listen(port, () => {
     console.log(`Сервер запущен на порту ${port}`);
     initializeDb();
 });
-
