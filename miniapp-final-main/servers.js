@@ -617,7 +617,7 @@ app.post('/api/admin/game_settings', async (req, res) => {
 app.post('/api/admin/contest/create', async (req, res) => {
     const { item_id, ticket_price, duration_hours } = req.body;
     if (!item_id || !ticket_price || !duration_hours) return res.status(400).json({ error: 'Все поля обязательны' });
-    const endTime = new Date(Date.now() + duration_hours * 60 * 60 * 1000);
+    const endTime = new Date(Date.now() + duration_hours * 60 * 60 * 1000).getTime();
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -665,3 +665,4 @@ app.listen(port, () => {
     console.log(`Сервер запущен на порту ${port}`);
     initializeDb();
 });
+
