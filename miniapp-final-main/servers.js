@@ -43,44 +43,87 @@ app.use(cors());
 app.use(express.json());
 
 
-async function syncBalanceWithBotAPI(telegram_id, delta, reason) {
-    try {
-        const body = JSON.stringify({
-            user_id: telegram_id,
-            delta: delta,
-            reason: reason
-        });
-        const signature = crypto.createHmac('sha256', MINI_APP_API_SECRET).update(body).digest('hex');
-        const response = await fetch(BOT_API_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Signature': signature,
-                'X-Idempotency-Key': uuidv4()
-            },
-            body: body
-        });
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || `Ошибка API бота: ${response.statusText}`);
-        }
-        console.log(`[Balance Sync SUCCESS] User: ${telegram_id}, Delta: ${delta}, Reason: ${reason}`);
-    } catch (error) {
-        console.error(`[Balance Sync FAILED] User: ${telegram_id}, Delta: ${delta}, Reason: ${reason}. Error: ${error.message}`);
-    }
-}
+// --- НОВАЯ ФУНКЦИЯ СИНХРОНИЗАЦИИ С ТАЙМАУТОМ ---
+async function syncBalanceWithBotAPIWithTimeout(telegram_id, delta, reason, timeout = 2000) { // 2 секунды таймаут
+    // AbortController нужен для прерывания fetch-запроса по таймауту
+    const controller = new AbortController();
+    const signal = controller.signal;
 
-async function changeUserBalance(client, telegram_id, delta, reason) {
-     const balanceResult = await client.query(
-        'UPDATE users SET balance_uah = balance_uah + $1 WHERE telegram_id = $2 RETURNING balance_uah',
-        [delta, telegram_id]
+    const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => {
+            controller.abort();
+            reject(new Error('Превышено время ожидания ответа от API баланса.'));
+        }, timeout)
     );
 
-    if (balanceResult.rows.length === 0) {
-        throw new Error('Пользователь не найден для обновления баланса');
+    const fetchPromise = (async () => {
+        try {
+            const body = JSON.stringify({
+                user_id: telegram_id,
+                delta: delta,
+                reason: reason
+            });
+            const signature = crypto.createHmac('sha256', MINI_APP_API_SECRET).update(body).digest('hex');
+            const response = await fetch(BOT_API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Signature': signature,
+                    'X-Idempotency-Key': uuidv4()
+                },
+                body: body,
+                signal: signal // Передаем AbortSignal в fetch
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || `Ошибка API бота: ${response.statusText}`);
+            }
+            return await response.json();
+        } catch (error) {
+            // Если ошибка из-за AbortController, она будет иметь имя 'AbortError'
+            if (error.name === 'AbortError') {
+                // Это не настоящая ошибка, а срабатывание нашего таймаута.
+                // Promise.race ниже уже обработает это.
+                // Просто предотвращаем дальнейшее выполнение.
+                return;
+            }
+            // Перебрасываем другие ошибки (сетевые, ошибки парсинга json и т.д.)
+            throw error;
+        }
+    })();
+
+    // Ждем либо успешного выполнения fetch, либо срабатывания таймаута
+    return Promise.race([fetchPromise, timeoutPromise]);
+}
+
+
+// --- НАДЕЖНЫЙ ХЕЛПЕР ДЛЯ ИЗМЕНЕНИЯ БАЛАНСА ---
+async function changeBalanceSynchronously(client, telegram_id, delta, reason) {
+    // Блокируем строку пользователя для обновления, чтобы избежать гонок состояний
+    const userResult = await client.query('SELECT balance_uah FROM users WHERE telegram_id = $1 FOR UPDATE', [telegram_id]);
+    if (userResult.rows.length === 0) {
+        throw new Error('Пользователь не найден.');
     }
-    syncBalanceWithBotAPI(telegram_id, delta, reason);
-    return { new_balance: balanceResult.rows[0].balance_uah };
+    const currentBalance = parseFloat(userResult.rows[0].balance_uah);
+
+    // Предварительная проверка баланса на нашей стороне
+    if (delta < 0 && currentBalance < Math.abs(delta)) {
+        throw new Error('Недостаточно средств.');
+    }
+
+    // Вызываем API бота с таймаутом. Если будет ошибка, вся транзакция откатится.
+    const botApiResponse = await syncBalanceWithBotAPIWithTimeout(telegram_id, delta, reason);
+
+    // Если API бота вернуло успех, обновляем наш локальный баланс до того значения,
+    // которое теперь является "правдой" в боте. Это гарантирует консистентность.
+    const newBalanceFromBot = botApiResponse.new_balance;
+    await client.query(
+        'UPDATE users SET balance_uah = $1 WHERE telegram_id = $2',
+        [newBalanceFromBot, telegram_id]
+    );
+
+    // Возвращаем новый, подтвержденный баланс
+    return { new_balance: newBalanceFromBot };
 }
 
 
@@ -145,6 +188,7 @@ app.post('/api/user/get-or-create', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
     finally { client.release(); }
 });
+
 app.get('/api/user/inventory', async (req, res) => {
     const { user_id } = req.query;
     if (!user_id) return res.status(400).json({ error: 'user_id является обязательным' });
@@ -156,44 +200,31 @@ app.get('/api/user/inventory', async (req, res) => {
     finally { client.release(); }
 });
 
-// --- ИЗМЕНЕННЫЙ МАРШРУТ ПРОДАЖИ С ЗАЩИТОЙ ОТ ДЮПА ---
 app.post('/api/user/inventory/sell', async (req, res) => {
     const { user_id, unique_id, telegram_id } = req.body;
     if (!user_id || !unique_id || !telegram_id) return res.status(400).json({ error: 'Неверные данные для продажи' });
-    
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-
-        // Атомарная операция: удаляем предмет и сразу получаем его стоимость.
-        // Если предмет уже продан (удален), этот запрос ничего не вернет.
         const sellQuery = `
             WITH deleted_item AS (
-                DELETE FROM user_inventory
-                WHERE id = $1 AND user_id = $2
-                RETURNING item_id
+                DELETE FROM user_inventory WHERE id = $1 AND user_id = $2 RETURNING item_id
             )
-            SELECT i.value
-            FROM items i
-            JOIN deleted_item di ON i.id = di.item_id;
+            SELECT i.value FROM items i JOIN deleted_item di ON i.id = di.item_id;
         `;
         const itemResult = await client.query(sellQuery, [unique_id, user_id]);
 
-        // Если itemResult.rows.length === 0, значит предмет уже был продан.
         if (itemResult.rows.length === 0) {
             throw new Error('Предмет не найден или уже продан.');
         }
         
         const itemValue = itemResult.rows[0].value;
-        const balanceResponse = await changeUserBalance(client, telegram_id, itemValue, `sell_item_${unique_id}`);
+        const balanceResponse = await changeBalanceSynchronously(client, telegram_id, itemValue, `sell_item_${unique_id}`);
 
         await client.query('COMMIT');
-        
         res.json({ success: true, newBalance: balanceResponse.new_balance });
-
     } catch (err) {
         await client.query('ROLLBACK');
-        // Не логируем "уже продан" как ошибку сервера, это ожидаемое поведение при дюпе
         if (err.message.includes('уже продан')) {
             return res.status(409).json({ error: err.message });
         }
@@ -208,24 +239,16 @@ app.post('/api/user/inventory/sell', async (req, res) => {
 app.post('/api/user/inventory/sell-multiple', async (req, res) => {
     const { user_id, unique_ids, telegram_id } = req.body;
     if (!user_id || !Array.isArray(unique_ids) || unique_ids.length === 0 || !telegram_id) return res.status(400).json({ error: 'Неверные данные' });
-    
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-
         const placeholders = unique_ids.map((_, i) => `$${i + 2}`).join(',');
-        // Аналогичная атомарная логика для массовой продажи
         const sellMultipleQuery = `
             WITH deleted_items AS (
-                DELETE FROM user_inventory
-                WHERE user_id = $1 AND id IN (${placeholders})
-                RETURNING item_id
+                DELETE FROM user_inventory WHERE user_id = $1 AND id IN (${placeholders}) RETURNING item_id
             )
-            SELECT SUM(i.value) as total_value
-            FROM items i
-            JOIN deleted_items di ON i.id = di.item_id;
+            SELECT SUM(i.value) as total_value FROM items i JOIN deleted_items di ON i.id = di.item_id;
         `;
-        
         const itemsResult = await client.query(sellMultipleQuery, [user_id, ...unique_ids]);
 
         if (itemsResult.rows.length === 0 || !itemsResult.rows[0].total_value) {
@@ -233,10 +256,8 @@ app.post('/api/user/inventory/sell-multiple', async (req, res) => {
         }
         
         const totalValue = parseInt(itemsResult.rows[0].total_value, 10);
-        const balanceResponse = await changeUserBalance(client, telegram_id, totalValue, `sell_multiple_${unique_ids.length}_items`);
-        
+        const balanceResponse = await changeBalanceSynchronously(client, telegram_id, totalValue, `sell_multiple_${unique_ids.length}_items`);
         await client.query('COMMIT');
-
         res.json({ success: true, newBalance: balanceResponse.new_balance, soldAmount: totalValue });
     } catch (err) {
         await client.query('ROLLBACK');
@@ -255,11 +276,10 @@ app.post('/api/case/open', async (req, res) => {
     const casePrice = 100;
     const totalCost = casePrice * (quantity || 1);
     if (!user_id || !quantity || quantity < 1 || !telegram_id) return res.status(400).json({ error: 'Неверные данные' });
-    
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const balanceResponse = await changeUserBalance(client, telegram_id, -totalCost, `open_case_${quantity}`);
+        const balanceResponse = await changeBalanceSynchronously(client, telegram_id, -totalCost, `open_case_${quantity}`);
         const caseItemsResult = await client.query('SELECT i.id, i.name, i."imageSrc", i.value FROM items i JOIN case_items ci ON i.id = ci.item_id WHERE ci.case_id = 1');
         let caseItems = caseItemsResult.rows.length > 0 ? caseItemsResult.rows : (await client.query('SELECT id, name, "imageSrc", value FROM items')).rows;
         if (caseItems.length === 0) throw new Error('Нет предметов в игре');
@@ -273,7 +293,7 @@ app.post('/api/case/open', async (req, res) => {
         res.json({ success: true, newBalance: balanceResponse.new_balance, wonItems });
     } catch (err) {
         await client.query('ROLLBACK');
-        console.error("Ошибка открытия кейса:", err);
+        console.error("Ошибка открытия кейса:", err.message);
         res.status(500).json({ error: err.message });
     } finally {
         client.release();
@@ -283,7 +303,6 @@ app.post('/api/case/open', async (req, res) => {
 app.post('/api/contest/buy-ticket', async (req, res) => {
     const { contest_id, telegram_id, quantity, user_id } = req.body;
     if (!contest_id || !telegram_id || !quantity || quantity < 1 || !user_id) return res.status(400).json({ error: 'Неверные данные' });
-    
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -291,7 +310,7 @@ app.post('/api/contest/buy-ticket', async (req, res) => {
         if (contestResult.rows.length === 0 || new Date(contestResult.rows[0].end_time) <= new Date()) throw new Error('Конкурс неактивен');
         const contest = contestResult.rows[0];
         const totalCost = contest.ticket_price * quantity;
-        const balanceResponse = await changeUserBalance(client, telegram_id, -totalCost, `buy_ticket_${quantity}_contest_${contest_id}`);
+        const balanceResponse = await changeBalanceSynchronously(client, telegram_id, -totalCost, `buy_ticket_${quantity}_contest_${contest_id}`);
         for (let i = 0; i < quantity; i++) {
             await client.query("INSERT INTO user_tickets (contest_id, user_id, telegram_id) VALUES ($1, $2, $3)", [contest_id, user_id, telegram_id]);
         }
@@ -313,6 +332,7 @@ app.get('/api/case/items_full', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
     finally { client.release(); }
 });
+
 app.get('/api/game_settings', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -321,6 +341,7 @@ app.get('/api/game_settings', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
     finally { client.release(); }
 });
+
 app.get('/api/contest/current', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -349,13 +370,15 @@ app.post('/api/games/coinflip', async (req, res) => {
         const result = Math.random() < 0.5 ? 'heads' : 'tails';
         const winAmount = result === choice ? bet * 2 : 0;
         const delta = winAmount - bet;
-        const balanceResponse = await changeUserBalance(client, telegram_id, delta, `coinflip_bet_${bet}`);
+        const balanceResponse = await changeBalanceSynchronously(client, telegram_id, delta, `coinflip_bet_${bet}`);
         await client.query('COMMIT');
         res.json({ success: true, result, winAmount, newBalance: balanceResponse.new_balance });
-    } catch (error) { 
+    } catch (error) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: error.message }); 
-    } finally { client.release(); }
+        res.status(500).json({ error: error.message });
+    } finally {
+        client.release();
+    }
 });
 
 app.post('/api/games/rps', async (req, res) => {
@@ -371,13 +394,15 @@ app.post('/api/games/rps', async (req, res) => {
         if (choice === computerChoice) winAmount = bet;
         else if ((choice === 'rock' && computerChoice === 'scissors') || (choice === 'paper' && computerChoice === 'rock') || (choice === 'scissors' && computerChoice === 'paper')) winAmount = bet * 2;
         const delta = winAmount - bet;
-        const balanceResponse = await changeUserBalance(client, telegram_id, delta, `rps_bet_${bet}`);
+        const balanceResponse = await changeBalanceSynchronously(client, telegram_id, delta, `rps_bet_${bet}`);
         await client.query('COMMIT');
         res.json({ success: true, computerChoice, winAmount, newBalance: balanceResponse.new_balance });
     } catch (error) {
         await client.query('ROLLBACK');
         res.status(500).json({ error: error.message });
-    } finally { client.release(); }
+    } finally {
+        client.release();
+    }
 });
 
 app.post('/api/games/slots', async (req, res) => {
@@ -392,13 +417,15 @@ app.post('/api/games/slots', async (req, res) => {
         if (results[0] === results[1] && results[1] === results[2]) winAmount = bet * 5;
         else if (results[0] === results[1] || results[1] === results[2]) winAmount = bet * 2;
         const delta = winAmount - bet;
-        const balanceResponse = await changeUserBalance(client, telegram_id, delta, `slots_bet_${bet}`);
+        const balanceResponse = await changeBalanceSynchronously(client, telegram_id, delta, `slots_bet_${bet}`);
         await client.query('COMMIT');
         res.json({ success: true, reels: results, winAmount, newBalance: balanceResponse.new_balance });
     } catch (error) {
         await client.query('ROLLBACK');
         res.status(500).json({ error: error.message });
-    } finally { client.release(); }
+    } finally {
+        client.release();
+    }
 });
 
 app.post('/api/games/upgrade', async (req, res) => {
@@ -436,14 +463,14 @@ app.post('/api/games/upgrade', async (req, res) => {
     } finally { client.release(); }
 });
 
-// --- MINER И TOWER API ---
+// MINER & TOWER API
 app.post('/api/games/miner/start', async (req, res) => {
     const { telegram_id, bet } = req.body;
     if (!telegram_id || !bet || bet < 1) return res.status(400).json({ error: 'Неверная ставка' });
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const balanceResponse = await changeUserBalance(client, telegram_id, -bet, `miner_start_bet_${bet}`);
+        const balanceResponse = await changeBalanceSynchronously(client, telegram_id, -bet, `miner_start_bet_${bet}`);
         const totalCells = 12, bombs = 6;
         const bombIndices = new Set();
         while (bombIndices.size < bombs) {
@@ -467,21 +494,16 @@ app.post('/api/games/miner/select', async (req, res) => {
     try {
         const sessionRes = await client.query("SELECT * FROM game_sessions WHERE id = $1", [sessionId]);
         if (sessionRes.rows.length === 0) return res.status(404).json({ error: 'Игра не найдена' });
-        
         let session = sessionRes.rows[0].game_state;
         const cell = session.grid[cellIndex];
-        
         if (cell.isBomb) {
             await client.query("DELETE FROM game_sessions WHERE id = $1", [sessionId]);
             return res.json({ success: true, isBomb: true, openedGrid: session.grid });
         }
-    
         session.openedCrystals++;
         const multiplier = Math.pow(1.4, session.openedCrystals);
         session.totalWin = session.bet * multiplier;
-
         await client.query("UPDATE game_sessions SET game_state = $1 WHERE id = $2", [session, sessionId]);
-        
         res.json({ success: true, isBomb: false, totalWin: session.totalWin, nextWin: session.bet * Math.pow(1.4, session.openedCrystals + 1) });
     } catch (error) { res.status(500).json({ error: error.message }); }
     finally { client.release(); }
@@ -495,10 +517,9 @@ app.post('/api/games/miner/cashout', async (req, res) => {
         await client.query('BEGIN');
         const sessionRes = await client.query("SELECT * FROM game_sessions WHERE id = $1", [sessionId]);
         if (sessionRes.rows.length === 0) return res.status(404).json({ error: 'Игра не найдена' });
-
         const session = sessionRes.rows[0].game_state;
         const telegram_id = sessionRes.rows[0].telegram_id;
-        const balanceResponse = await changeUserBalance(client, telegram_id, session.totalWin, `miner_cashout_${session.totalWin}`);
+        const balanceResponse = await changeBalanceSynchronously(client, telegram_id, session.totalWin, `miner_cashout_${session.totalWin}`);
         await client.query("DELETE FROM game_sessions WHERE id = $1", [sessionId]);
         await client.query('COMMIT');
         res.json({ success: true, winAmount: session.totalWin, newBalance: balanceResponse.new_balance });
@@ -515,7 +536,7 @@ app.post('/api/games/tower/start', async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const balanceResponse = await changeUserBalance(client, telegram_id, -bet, `tower_start_bet_${bet}`);
+        const balanceResponse = await changeBalanceSynchronously(client, telegram_id, -bet, `tower_start_bet_${bet}`);
         const levels = 5;
         const multipliers = [1.5, 2.5, 4, 8, 16];
         const sessionId = uuidv4();
@@ -536,23 +557,19 @@ app.post('/api/games/tower/select', async (req, res) => {
     try {
         const sessionRes = await client.query("SELECT * FROM game_sessions WHERE id = $1", [sessionId]);
         if (sessionRes.rows.length === 0) return res.status(404).json({ error: 'Игра не найдена' });
-
         let session = sessionRes.rows[0].game_state;
         const telegram_id = sessionRes.rows[0].telegram_id;
         const bombCol = session.grid[session.currentLevel];
-
         if (col === bombCol) {
             await client.query("DELETE FROM game_sessions WHERE id = $1", [sessionId]);
             return res.json({ success: true, isBomb: true, bombCol });
         }
-        
         session.currentLevel++;
         const cashoutAmount = session.payouts[session.currentLevel - 1];
         const isWin = session.currentLevel === session.levels;
-        
         if (isWin) {
             await client.query('BEGIN');
-            const balanceResponse = await changeUserBalance(client, telegram_id, cashoutAmount, `tower_win_${cashoutAmount}`);
+            const balanceResponse = await changeBalanceSynchronously(client, telegram_id, cashoutAmount, `tower_win_${cashoutAmount}`);
             await client.query("DELETE FROM game_sessions WHERE id = $1", [sessionId]);
             await client.query('COMMIT');
             return res.json({ success: true, isBomb: false, isWin: true, winAmount: cashoutAmount, newBalance: balanceResponse.new_balance, bombCol });
@@ -561,7 +578,7 @@ app.post('/api/games/tower/select', async (req, res) => {
             res.json({ success: true, isBomb: false, isWin: false, cashoutAmount, bombCol });
         }
     } catch (error) {
-        if(client) await client.query('ROLLBACK');
+        if(client) await client.query('ROLLBACK').catch(console.error);
         res.status(500).json({ error: error.message });
     } finally {
         if(client) client.release();
@@ -580,7 +597,7 @@ app.post('/api/games/tower/cashout', async (req, res) => {
         const telegram_id = sessionRes.rows[0].telegram_id;
         if (session.currentLevel === 0) return res.status(400).json({ error: 'Нечего забирать' });
         const winAmount = session.payouts[session.currentLevel - 1];
-        const balanceResponse = await changeUserBalance(client, telegram_id, winAmount, `tower_cashout_${winAmount}`);
+        const balanceResponse = await changeBalanceSynchronously(client, telegram_id, winAmount, `tower_cashout_${winAmount}`);
         await client.query("DELETE FROM game_sessions WHERE id = $1", [sessionId]);
         await client.query('COMMIT');
         res.json({ success: true, winAmount, newBalance: balanceResponse.new_balance });
@@ -598,11 +615,11 @@ app.post('/api/admin/user/balance', async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const user = await client.query("SELECT balance_uah FROM users WHERE telegram_id = $1", [telegramId]);
+        const user = await client.query("SELECT balance_uah FROM users WHERE telegram_id = $1 FOR UPDATE", [telegramId]);
         if (user.rows.length === 0) return res.status(404).json({ error: "Пользователь не найден" });
         const currentBalance = parseFloat(user.rows[0].balance_uah);
         const delta = newBalance - currentBalance;
-        const response = await changeUserBalance(client, telegramId, delta, 'admin_panel_update');
+        const response = await changeBalanceSynchronously(client, telegramId, delta, 'admin_panel_update');
         await client.query('COMMIT');
         res.json({ success: true, new_balance: response.new_balance });
     } catch (error) {
@@ -610,6 +627,7 @@ app.post('/api/admin/user/balance', async (req, res) => {
         res.status(500).json({ error: error.message });
     } finally { client.release(); }
 });
+
 app.get('/api/admin/users', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -643,9 +661,8 @@ app.post('/api/admin/case/items', async (req, res) => {
         await client.query('BEGIN');
         await client.query("DELETE FROM case_items WHERE case_id = $1", [caseId]);
         if (itemIds && itemIds.length > 0) {
-            for (const itemId of itemIds) {
-                await client.query("INSERT INTO case_items (case_id, item_id) VALUES ($1, $2)", [caseId, itemId]);
-            }
+            const values = itemIds.map(itemId => `(${caseId}, ${itemId})`).join(',');
+            await client.query(`INSERT INTO case_items (case_id, item_id) VALUES ${values}`);
         }
         await client.query('COMMIT');
         res.json({ success: true });
@@ -694,7 +711,7 @@ app.post('/api/admin/contest/draw/:id', async (req, res) => {
         const contestResult = await client.query("SELECT * FROM contests WHERE id = $1 AND is_active = TRUE", [contestId]);
         if (contestResult.rows.length === 0) throw new Error('Активный конкурс не найден');
         const contest = contestResult.rows[0];
-        const participantsResult = await client.query("SELECT user_id, telegram_id FROM user_tickets WHERE contest_id = $1", [contestId]);
+        const participantsResult = await client.query("SELECT DISTINCT user_id, telegram_id FROM user_tickets WHERE contest_id = $1", [contestId]);
         if (participantsResult.rows.length === 0) {
             await client.query("UPDATE contests SET is_active = FALSE WHERE id = $1", [contestId]);
             await client.query('COMMIT');
@@ -711,6 +728,7 @@ app.post('/api/admin/contest/draw/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { client.release(); }
 });
+
 
 app.listen(port, () => {
     console.log(`Сервер запущен на порту ${port}`);
